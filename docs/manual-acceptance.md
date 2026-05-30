@@ -5,7 +5,7 @@
 1. Start TWS paper trading or IB Gateway locally.
 2. Enable API access in TWS/Gateway settings.
 3. Confirm the API socket port is `7497` for paper trading.
-4. Export `OPENAI_API_KEY` before launching the app.
+4. Confirm `codex` is installed and authenticated before launching the app.
 
 ## App Flow
 
@@ -22,9 +22,8 @@
 - Disconnect IBKR and confirm scheduling is blocked.
 - Use a missing/invalid symbol and confirm only that row shows no data.
 - Force the agent worker to return invalid JSON and confirm the UI shows an AI parse error while preserving prior valid stale output.
-- Remove `OPENAI_API_KEY` and confirm agent failures do not block the app.
+- Make `codex` unavailable or unauthenticated and confirm agent failures do not block the app.
 
 ## Safety Check
 
 The UI and backend must expose no order placement, order cancellation, position sizing, account allocation, or automated trading capability.
-

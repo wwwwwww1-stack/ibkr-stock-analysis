@@ -240,10 +240,10 @@ func (w *ibkrWrapper) HistoricalDataEnd(reqID int64, startDateStr string, endDat
 	result.bars <- bars
 }
 
-func (w *ibkrWrapper) Error(reqID ibapi.TickerID, errorTime int64, errCode int64, errString string, advancedOrderRejectJson string) {
+func (w *ibkrWrapper) Error(reqID int64, errorTime int64, errCode int64, errString string, advancedOrderRejectJson string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if result, ok := w.results[int64(reqID)]; ok {
+	if result, ok := w.results[reqID]; ok {
 		result.errs <- fmt.Errorf("ibkr error %d: %s", errCode, errString)
 	}
 }
@@ -260,9 +260,9 @@ func (w *ibkrWrapper) removeRealtime(reqID int64) {
 	delete(w.realtime, reqID)
 }
 
-func (w *ibkrWrapper) RealtimeBar(reqID ibapi.TickerID, unixTime int64, open float64, high float64, low float64, close float64, volume ibapi.Decimal, wap ibapi.Decimal, count int64) {
+func (w *ibkrWrapper) RealtimeBar(reqID int64, unixTime int64, open float64, high float64, low float64, close float64, volume ibapi.Decimal, wap ibapi.Decimal, count int64) {
 	w.mu.Lock()
-	subscription, ok := w.realtime[int64(reqID)]
+	subscription, ok := w.realtime[reqID]
 	w.mu.Unlock()
 	if !ok {
 		return

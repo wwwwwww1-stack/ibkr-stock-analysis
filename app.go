@@ -26,7 +26,7 @@ func NewApp() *App {
 	}
 	store := storage.NewStore(storePath, 50)
 	provider := market.NewIBKRProvider()
-	agentClient := agent.NewProcessClient("agent-worker/dist/index.js")
+	agentClient := agent.NewCodexClient()
 	return &App{
 		service: appsvc.NewService(store, provider, agentClient, nil),
 	}
@@ -36,7 +36,7 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.service = appsvc.NewService(a.serviceStore(), market.NewIBKRProvider(), agent.NewProcessClient("agent-worker/dist/index.js"), func(ctx context.Context, name string, payload any) {
+	a.service = appsvc.NewService(a.serviceStore(), market.NewIBKRProvider(), agent.NewCodexClient(), func(ctx context.Context, name string, payload any) {
 		runtime.EventsEmit(ctx, name, payload)
 	})
 }

@@ -1,9 +1,9 @@
 module ibkr-stock-analysis
 
-go 1.25
+go 1.26
 
 require (
-	github.com/scmhub/ibapi v0.10.44
+	github.com/scmhub/ibapi v0.10.46
 	github.com/wailsapp/wails/v2 v2.12.0
 )
 
@@ -36,9 +36,9 @@ require (
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )
 
 // replace github.com/wailsapp/wails/v2 v2.12.0 => /Users/wangruizhi/work/pkg/mod

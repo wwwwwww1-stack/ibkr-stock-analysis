@@ -36,7 +36,7 @@ func TestOwnGoSourceDoesNotCallTradingMutationAPIs(t *testing.T) {
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == "agent-worker" || entry.Name() == "frontend" || path == filepath.Join(root, "internal", "safety") {
+			if entry.Name() == ".git" || entry.Name() == "frontend" || path == filepath.Join(root, "internal", "safety") {
 				return filepath.SkipDir
 			}
 			return nil

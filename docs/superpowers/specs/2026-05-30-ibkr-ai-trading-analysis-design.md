@@ -6,7 +6,7 @@ Approved for implementation planning.
 
 ## Goal
 
-Build a Wails-based macOS desktop application that connects to local IBKR TWS or IB Gateway in read-only mode, analyzes a user-defined US stock watchlist on intraday bar closes, and uses the OpenAI Agents SDK to produce structured price-action analysis: long, short, or neutral, plus entry zone, stop loss, take profit, risk-reward, confidence, and invalidation conditions.
+Build a Wails-based macOS desktop application that connects to local IBKR TWS or IB Gateway in read-only mode, analyzes a user-defined US stock watchlist on intraday bar closes, and uses the local Codex CLI to produce structured price-action analysis: long, short, or neutral, plus entry zone, stop loss, take profit, risk-reward, confidence, and invalidation conditions.
 
 This application is an analysis assistant only. Version 1 must not place orders, modify account state, or expose any trade execution capability.
 
@@ -20,7 +20,7 @@ This application is an analysis assistant only. Version 1 must not place orders,
 - Timeframes: `1m`, `5m`, `15m`, `1h`.
 - Analysis mode: watchlist batch analysis.
 - Trigger mode: analyze after each selected timeframe bar closes.
-- AI layer: OpenAI Agents SDK for Node.js via `@openai/agents`.
+- AI layer: local Codex CLI invoked by the Go backend through `codex exec`.
 - Output: structured, validated JSON consumed by the Go backend and displayed in the frontend.
 
 ## Out of Scope for Version 1
@@ -121,15 +121,14 @@ Required capabilities:
 
 The connector must not include order placement methods in version 1.
 
-### Node Agent Worker
+### Codex CLI Analysis Runtime
 
-The Node worker uses `@openai/agents` and is invoked by the Go backend as a local child process or local IPC worker. The worker receives structured market summaries and returns structured JSON.
+The Go backend invokes local `codex exec` as a non-interactive child process. Codex receives structured market summaries through stdin and writes structured JSON matching the output schema.
 
 Responsibilities:
 
-- Define the trading analysis agent.
 - Accept one symbol analysis request at a time.
-- Run the agent with constrained instructions.
+- Run Codex with constrained read-only analysis instructions.
 - Return only JSON matching the output schema.
 - Include no IBKR credentials.
 - Include no account access.
@@ -145,7 +144,7 @@ Responsibilities:
 6. The scheduler creates one analysis job per watchlist symbol.
 7. The queue runs jobs with a small concurrency limit, initially `3`.
 8. For each job, Go builds an agent input payload from recent bars and derived features.
-9. The Node worker runs the OpenAI agent.
+9. The Codex CLI runtime produces the structured analysis.
 10. Go validates and stores the JSON result.
 11. Go emits result updates to the Wails frontend.
 12. The frontend updates the table and detail panel.
@@ -325,9 +324,9 @@ Cover:
 
 - Use Wails for the desktop shell and Go-to-frontend bindings.
 - Use Go for IBKR connectivity, scheduling, validation, persistence, and local app state.
-- Use a Node worker for `@openai/agents` because the requested OpenAI Agents SDK integration is JavaScript/TypeScript oriented.
+- Use local `codex exec` for AI analysis so the Go backend owns prompt construction, schema validation, and process execution.
 - Keep the AI agent stateless per analysis request in version 1.
-- Use stable JSON contracts between Go and Node.
+- Use stable JSON contracts between Go and Codex.
 - Prefer mock data providers in tests so the app remains testable without a live IBKR session.
 
 ## References

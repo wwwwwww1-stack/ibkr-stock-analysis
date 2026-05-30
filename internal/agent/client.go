@@ -1,15 +1,17 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"ibkr-stock-analysis/internal/domain"
 )
@@ -60,64 +62,177 @@ func (m *MockClient) Analyze(ctx context.Context, input domain.AgentInput) (doma
 	return output, nil
 }
 
-type ProcessClient struct {
+type CodexClient struct {
 	Command string
-	Args    []string
+	Model   string
+	Now     func() time.Time
 }
 
-func NewProcessClient(workerPath string) *ProcessClient {
-	return &ProcessClient{
-		Command: "node",
-		Args:    []string{workerPath},
+func NewCodexClient() *CodexClient {
+	return &CodexClient{
+		Command: "codex",
+		Model:   strings.TrimSpace(os.Getenv("CODEX_MODEL")),
 	}
 }
 
-func (p *ProcessClient) Analyze(ctx context.Context, input domain.AgentInput) (domain.AgentOutput, error) {
-	payload, err := json.Marshal(input)
+func (c *CodexClient) Analyze(ctx context.Context, input domain.AgentInput) (domain.AgentOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.AgentOutput{}, err
+	}
+	now := time.Now().UTC()
+	if c.Now != nil {
+		now = c.Now().UTC()
+	}
+	prompt, err := BuildCodexPrompt(input, now)
 	if err != nil {
 		return domain.AgentOutput{}, err
 	}
-	cmd := exec.CommandContext(ctx, p.Command, p.Args...)
-	cmd.Stdin = bytes.NewReader(append(payload, '\n'))
+	tmpDir, err := os.MkdirTemp("", "ibkr-codex-analysis-*")
+	if err != nil {
+		return domain.AgentOutput{}, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schemaPath := filepath.Join(tmpDir, "agent-output.schema.json")
+	outputPath := filepath.Join(tmpDir, "agent-output.json")
+	if err := os.WriteFile(schemaPath, []byte(agentOutputJSONSchema), 0o600); err != nil {
+		return domain.AgentOutput{}, err
+	}
+
+	command := strings.TrimSpace(c.Command)
+	if command == "" {
+		command = "codex"
+	}
+	args := []string{
+		"exec",
+		"--sandbox", "read-only",
+		"--ephemeral",
+		"--color", "never",
+		"--skip-git-repo-check",
+		"--output-schema", schemaPath,
+		"--output-last-message", outputPath,
+	}
+	if model := strings.TrimSpace(c.Model); model != "" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, "-")
+
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Stdin = strings.NewReader(prompt)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return domain.AgentOutput{}, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "no such file") {
+			return domain.AgentOutput{}, fmt.Errorf("Codex CLI not found: install and authenticate codex before running real analysis")
 		}
-		return domain.AgentOutput{}, err
-	}
-	scanner := bufio.NewScanner(&stdout)
-	if !scanner.Scan() {
-		if scanner.Err() != nil {
-			return domain.AgentOutput{}, scanner.Err()
+		details := strings.TrimSpace(stderr.String())
+		if details == "" {
+			details = strings.TrimSpace(stdout.String())
 		}
-		return domain.AgentOutput{}, errors.New("agent worker returned no response")
+		if details != "" {
+			return domain.AgentOutput{}, fmt.Errorf("Codex CLI analysis failed: %s", details)
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return domain.AgentOutput{}, ctxErr
+		}
+		return domain.AgentOutput{}, fmt.Errorf("Codex CLI analysis failed: %w", err)
 	}
-	return DecodeResponse(scanner.Bytes())
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		return domain.AgentOutput{}, fmt.Errorf("Codex CLI returned no analysis output: %w", err)
+	}
+	return decodeCodexOutput(data)
 }
 
-type workerResponse struct {
-	OK     bool               `json:"ok"`
-	Result domain.AgentOutput `json:"result"`
-	Error  string             `json:"error"`
+func BuildCodexPrompt(input domain.AgentInput, generatedAt time.Time) (string, error) {
+	payload, err := json.MarshalIndent(input, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return strings.Join([]string{
+		"You are analyzing supplied market data, not editing code.",
+		"This is not financial advice; do not claim that it is financial advice or a recommendation.",
+		"Do not claim to access accounts, portfolio data, positions, balances, or live brokerage state.",
+		"Never request, store, or mention needing IBKR credentials.",
+		"Do not run tools, do not inspect accounts, do not place or prepare orders.",
+		"Use only the market data supplied in this prompt.",
+		"For neutral direction, omit or null directional fields such as entry_zone, stop_loss, and risk_reward.",
+		"For long or short direction, include entry_zone, stop_loss, take_profit, and positive risk_reward.",
+		"Return exactly one JSON object matching the schema.",
+		fmt.Sprintf("Use generated_at exactly as: %s", generatedAt.UTC().Format(time.RFC3339)),
+		"Input market data:",
+		string(payload),
+	}, "\n\n"), nil
 }
 
-func DecodeResponse(data []byte) (domain.AgentOutput, error) {
-	var response workerResponse
-	if err := json.Unmarshal(data, &response); err != nil {
+func decodeCodexOutput(data []byte) (domain.AgentOutput, error) {
+	var output domain.AgentOutput
+	if err := json.Unmarshal(bytes.TrimSpace(data), &output); err != nil {
 		return domain.AgentOutput{}, err
 	}
-	if !response.OK {
-		if strings.TrimSpace(response.Error) == "" {
-			return domain.AgentOutput{}, errors.New("agent worker failed")
-		}
-		return domain.AgentOutput{}, errors.New(response.Error)
-	}
-	if err := response.Result.Validate(); err != nil {
+	if err := output.Validate(); err != nil {
 		return domain.AgentOutput{}, err
 	}
-	return response.Result, nil
+	return output, nil
 }
+
+const agentOutputJSONSchema = `{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["direction", "take_profit", "confidence", "summary", "price_action", "invalidated_if", "generated_at"],
+  "properties": {
+    "direction": {
+      "type": "string",
+      "enum": ["long", "short", "neutral"]
+    },
+    "entry_zone": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["low", "high"],
+          "properties": {
+            "low": {"type": "number"},
+            "high": {"type": "number"}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
+    "stop_loss": {
+      "anyOf": [{"type": "number"}, {"type": "null"}]
+    },
+    "take_profit": {
+      "type": "array",
+      "items": {"type": "number"}
+    },
+    "risk_reward": {
+      "anyOf": [{"type": "number"}, {"type": "null"}]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "price_action": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "invalidated_if": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}`
