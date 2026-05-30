@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -52,22 +53,35 @@ func TestMockClientReturnsConfiguredError(t *testing.T) {
 func TestBuildCodexPromptIncludesMarketDataAndSafetyInstructions(t *testing.T) {
 	input := validAgentInput()
 	generatedAt := time.Date(2026, 5, 30, 10, 5, 0, 0, time.UTC)
+	snippets := []KnowledgeSnippet{
+		{
+			Source: "priceaction/趋势 1.md",
+			Title:  "核心观点",
+			Text:   "牛市趋势的关键是更高的低点，熊市趋势的关键是更低的高点。",
+		},
+	}
 
-	prompt, err := BuildCodexPrompt(input, generatedAt)
+	prompt, err := BuildCodexPrompt(input, generatedAt, snippets)
 	if err != nil {
 		t.Fatalf("BuildCodexPrompt returned error: %v", err)
 	}
 
 	assertContains(t, prompt, "You are analyzing supplied market data, not editing code.")
 	assertContains(t, prompt, "Do not run tools, do not inspect accounts, do not place or prepare orders.")
+	assertContains(t, prompt, "Use only supplied market data and supplied PriceAction knowledge excerpts.")
+	assertContains(t, prompt, "Do not browse the repository or read priceaction files yourself.")
 	assertContains(t, prompt, "Return exactly one JSON object matching the schema.")
 	assertContains(t, prompt, "Use generated_at exactly as: 2026-05-30T10:05:00Z")
+	assertContains(t, prompt, "PriceAction knowledge excerpts:")
+	assertContains(t, prompt, `"source": "priceaction/趋势 1.md"`)
+	assertContains(t, prompt, "更高的低点")
 	assertContains(t, prompt, `"symbol": "NVDA"`)
 	assertContains(t, prompt, `"timeframe": "5m"`)
 }
 
 func TestCodexClientInvokesCodexExecAndParsesValidOutput(t *testing.T) {
 	fake := createFakeCodex(t, `printf '%s\n' "$@" > "$RECORD_FILE"
+pwd > "$CWD_FILE"
 out=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--output-last-message" ]; then
@@ -97,6 +111,8 @@ JSON
 	assertContains(t, args, "exec")
 	assertContains(t, args, "--sandbox\nread-only")
 	assertContains(t, args, "--ephemeral")
+	assertContains(t, args, "--ignore-rules")
+	assertContains(t, args, "--ignore-user-config")
 	assertContains(t, args, "--skip-git-repo-check")
 	assertContains(t, args, "--output-schema")
 	assertContains(t, args, "--output-last-message")
@@ -104,6 +120,12 @@ JSON
 
 	prompt := readRecordedFile(t, "PROMPT_FILE")
 	assertContains(t, prompt, `"symbol": "NVDA"`)
+	assertContains(t, prompt, "PriceAction knowledge excerpts:")
+	assertContains(t, prompt, "交易区间")
+	cwd := readRecordedFile(t, "CWD_FILE")
+	if strings.TrimSpace(cwd) == "" || strings.TrimSpace(cwd) == currentWorkingDir(t) {
+		t.Fatalf("codex cwd = %q, want isolated temp dir", cwd)
+	}
 }
 
 func TestCodexClientUsesConfiguredModel(t *testing.T) {
@@ -160,6 +182,38 @@ func TestCodexClientReportsMissingCodexCLI(t *testing.T) {
 	}
 }
 
+func TestCodexClientReportsKnowledgeBaseError(t *testing.T) {
+	client := &CodexClient{
+		Command:   filepath.Join(t.TempDir(), "missing-codex"),
+		Knowledge: NewMarkdownKnowledgeProvider(os.DirFS(filepath.Join(t.TempDir(), "missing-kb"))),
+	}
+
+	_, err := client.Analyze(context.Background(), validAgentInput())
+	if err == nil || !strings.Contains(err.Error(), "PriceAction knowledge base unavailable") {
+		t.Fatalf("err = %v, want PriceAction knowledge base unavailable", err)
+	}
+}
+
+func TestAgentOutputSchemaRequiresEveryPropertyForCodexStrictSchema(t *testing.T) {
+	var schema struct {
+		Required   []string                   `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(agentOutputJSONSchema), &schema); err != nil {
+		t.Fatalf("agentOutputJSONSchema is invalid JSON: %v", err)
+	}
+
+	required := make(map[string]bool, len(schema.Required))
+	for _, name := range schema.Required {
+		required[name] = true
+	}
+	for name := range schema.Properties {
+		if !required[name] {
+			t.Fatalf("schema property %q is not listed in required; Codex strict schema requires every property to be required and nullable when optional", name)
+		}
+	}
+}
+
 func ptr(v float64) *float64 { return &v }
 
 func validAgentInput() domain.AgentInput {
@@ -197,8 +251,10 @@ func createFakeCodex(t *testing.T, body string) string {
 	dir := t.TempDir()
 	recordFile := filepath.Join(dir, "args.txt")
 	promptFile := filepath.Join(dir, "prompt.txt")
+	cwdFile := filepath.Join(dir, "cwd.txt")
 	t.Setenv("RECORD_FILE", recordFile)
 	t.Setenv("PROMPT_FILE", promptFile)
+	t.Setenv("CWD_FILE", cwdFile)
 	path := filepath.Join(dir, "codex")
 	script := "#!/bin/sh\n" + body
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -214,6 +270,15 @@ func readRecordedFile(t *testing.T, envName string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func currentWorkingDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func assertContains(t *testing.T, haystack string, needle string) {

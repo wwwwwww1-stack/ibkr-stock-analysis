@@ -14,6 +14,7 @@ Version 1 is analysis assistance only. Do not add order placement, order cancell
 - Default timeframe: `5m`
 - Codex model: Codex CLI default, optionally overridable with `CODEX_MODEL`
 - Real agent analysis requires an installed and authenticated `codex` CLI
+- PriceAction knowledge is bundled from `priceaction/*.md`; `PRICEACTION_KB_PATH=/path/to/priceaction` overrides it for local experiments
 
 ## Required Tooling
 
@@ -66,7 +67,8 @@ make dev
 - `internal/market`: read-only market data provider interface, mock provider, historical bar helpers, and IBKR adapter.
 - `internal/scheduler`: timeframe scheduling and next-run logic.
 - `internal/analysis`: feature derivation and bounded analysis queue.
-- `internal/agent`: Go client for local `codex exec` analysis and tests for the Codex CLI boundary.
+- `internal/agent`: Go client for local `codex exec` analysis, PriceAction knowledge selection, and tests for the Codex CLI boundary.
+- `priceaction`: bundled Markdown knowledge base used by real Codex analysis.
 - `frontend`: React TypeScript workspace UI using Wails-generated bindings in `frontend/wailsjs`.
 - `docs/manual-acceptance.md`: manual acceptance flow for TWS or IB Gateway paper trading.
 - `docs/superpowers/specs` and `docs/superpowers/plans`: original design and milestone plans.
@@ -77,6 +79,7 @@ make dev
 - Do not call IBKR APIs such as `PlaceOrder`, `CancelOrder`, `ReqAccountUpdates`, `ReqPositions`, or `ReqOpenOrders`.
 - Do not add UI controls that imply executing, approving, sizing, allocating, or automating trades.
 - Analysis output may include directional bias, entry zone, stop loss, take profit, risk-reward, confidence, summary, and invalidation notes, but it must remain advisory.
+- Codex prompts may use only supplied market data and Go-injected PriceAction excerpts. Do not let Codex browse the repo or load account/brokerage state for analysis.
 - Preserve the mock market provider so tests and local development do not require TWS/Gateway.
 
 ## Development Expectations

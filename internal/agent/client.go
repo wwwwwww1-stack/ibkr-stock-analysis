@@ -63,15 +63,17 @@ func (m *MockClient) Analyze(ctx context.Context, input domain.AgentInput) (doma
 }
 
 type CodexClient struct {
-	Command string
-	Model   string
-	Now     func() time.Time
+	Command   string
+	Model     string
+	Knowledge KnowledgeProvider
+	Now       func() time.Time
 }
 
 func NewCodexClient() *CodexClient {
 	return &CodexClient{
-		Command: "codex",
-		Model:   strings.TrimSpace(os.Getenv("CODEX_MODEL")),
+		Command:   "codex",
+		Model:     strings.TrimSpace(os.Getenv("CODEX_MODEL")),
+		Knowledge: NewDefaultKnowledgeProvider(),
 	}
 }
 
@@ -83,7 +85,15 @@ func (c *CodexClient) Analyze(ctx context.Context, input domain.AgentInput) (dom
 	if c.Now != nil {
 		now = c.Now().UTC()
 	}
-	prompt, err := BuildCodexPrompt(input, now)
+	knowledge := c.Knowledge
+	if knowledge == nil {
+		knowledge = NewDefaultKnowledgeProvider()
+	}
+	snippets, err := knowledge.Snippets(input)
+	if err != nil {
+		return domain.AgentOutput{}, err
+	}
+	prompt, err := BuildCodexPrompt(input, now, snippets)
 	if err != nil {
 		return domain.AgentOutput{}, err
 	}
@@ -107,6 +117,8 @@ func (c *CodexClient) Analyze(ctx context.Context, input domain.AgentInput) (dom
 		"exec",
 		"--sandbox", "read-only",
 		"--ephemeral",
+		"--ignore-rules",
+		"--ignore-user-config",
 		"--color", "never",
 		"--skip-git-repo-check",
 		"--output-schema", schemaPath,
@@ -118,6 +130,7 @@ func (c *CodexClient) Analyze(ctx context.Context, input domain.AgentInput) (dom
 	args = append(args, "-")
 
 	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = tmpDir
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -147,8 +160,12 @@ func (c *CodexClient) Analyze(ctx context.Context, input domain.AgentInput) (dom
 	return decodeCodexOutput(data)
 }
 
-func BuildCodexPrompt(input domain.AgentInput, generatedAt time.Time) (string, error) {
+func BuildCodexPrompt(input domain.AgentInput, generatedAt time.Time, snippets []KnowledgeSnippet) (string, error) {
 	payload, err := json.MarshalIndent(input, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	knowledgePayload, err := knowledgeSnippetsJSON(snippets)
 	if err != nil {
 		return "", err
 	}
@@ -158,11 +175,14 @@ func BuildCodexPrompt(input domain.AgentInput, generatedAt time.Time) (string, e
 		"Do not claim to access accounts, portfolio data, positions, balances, or live brokerage state.",
 		"Never request, store, or mention needing IBKR credentials.",
 		"Do not run tools, do not inspect accounts, do not place or prepare orders.",
-		"Use only the market data supplied in this prompt.",
+		"Use only supplied market data and supplied PriceAction knowledge excerpts.",
+		"Do not browse the repository or read priceaction files yourself.",
 		"For neutral direction, omit or null directional fields such as entry_zone, stop_loss, and risk_reward.",
 		"For long or short direction, include entry_zone, stop_loss, take_profit, and positive risk_reward.",
 		"Return exactly one JSON object matching the schema.",
 		fmt.Sprintf("Use generated_at exactly as: %s", generatedAt.UTC().Format(time.RFC3339)),
+		"PriceAction knowledge excerpts:",
+		knowledgePayload,
 		"Input market data:",
 		string(payload),
 	}, "\n\n"), nil
@@ -183,7 +203,7 @@ const agentOutputJSONSchema = `{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["direction", "take_profit", "confidence", "summary", "price_action", "invalidated_if", "generated_at"],
+  "required": ["direction", "entry_zone", "stop_loss", "take_profit", "risk_reward", "confidence", "summary", "price_action", "invalidated_if", "generated_at"],
   "properties": {
     "direction": {
       "type": "string",

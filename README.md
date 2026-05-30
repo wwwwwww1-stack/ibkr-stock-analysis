@@ -41,6 +41,15 @@ make build
 - IBKR client ID: `1001`
 - Default timeframe: `5m`
 - Codex model: Codex CLI default, optionally overridable with `CODEX_MODEL`
+- PriceAction knowledge: bundled from `priceaction/*.md`
+
+For local knowledge-base experiments without rebuilding the app, point the runtime at another Markdown directory:
+
+```bash
+PRICEACTION_KB_PATH=/path/to/priceaction make dev
+```
+
+The Go backend selects and injects PriceAction excerpts into the Codex prompt. Codex analysis is instructed not to browse the repository or read `priceaction` files itself.
 
 ## Manual Acceptance
 
