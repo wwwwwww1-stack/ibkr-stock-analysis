@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"ibkr-stock-analysis/internal/account"
 	"ibkr-stock-analysis/internal/agent"
 	"ibkr-stock-analysis/internal/capture"
 	"ibkr-stock-analysis/internal/domain"
@@ -48,6 +49,166 @@ func TestServiceSavesSettingsAndNormalizesWatchlist(t *testing.T) {
 
 	if len(state.Symbols) != 2 || state.Symbols[0].Symbol != "NVDA" || state.Symbols[1].Symbol != "AAPL" {
 		t.Fatalf("symbols = %#v", state.Symbols)
+	}
+}
+
+func TestServiceRefreshAccountSnapshotSuccess(t *testing.T) {
+	snapshot := domain.AccountSnapshot{
+		AvailableCashUSD: 12500,
+		BuyingPowerUSD:   25000,
+		SnapshotAt:       time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+		Positions:        []domain.AccountPosition{{Symbol: "NVDA", Quantity: 10, AverageCost: 100, MarketValueUSD: 1000}},
+	}
+	var events []domain.AppState
+	store := storage.NewStore(filepath.Join(t.TempDir(), "app.db"), 20)
+	service := NewService(store, market.NewMockProvider(), agent.NewMockClient(), func(ctx context.Context, name string, payload any) {
+		if name != "account:update" {
+			return
+		}
+		state, ok := payload.(domain.AppState)
+		if !ok {
+			t.Fatalf("payload = %T, want domain.AppState", payload)
+		}
+		events = append(events, state)
+	}, account.NewMockProvider(snapshot, nil))
+
+	state, err := service.RefreshAccountSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshAccountSnapshot returned error: %v", err)
+	}
+	if state.AccountSnapshot.Status != domain.AccountSnapshotReady {
+		t.Fatalf("account status = %q, want ready", state.AccountSnapshot.Status)
+	}
+	if state.AccountSnapshot.Snapshot == nil || state.AccountSnapshot.Snapshot.AvailableCashUSD != 12500 {
+		t.Fatalf("account snapshot = %#v, want cash 12500", state.AccountSnapshot.Snapshot)
+	}
+	if len(events) < 2 || events[0].AccountSnapshot.Status != domain.AccountSnapshotLoading || events[len(events)-1].AccountSnapshot.Status != domain.AccountSnapshotReady {
+		t.Fatalf("events = %#v, want loading then ready", events)
+	}
+}
+
+func TestServiceRefreshAccountSnapshotFailure(t *testing.T) {
+	service := NewService(
+		storage.NewStore(filepath.Join(t.TempDir(), "app.db"), 20),
+		market.NewMockProvider(),
+		agent.NewMockClient(),
+		nil,
+		account.NewMockProvider(domain.AccountSnapshot{}, errors.New("account data unavailable")),
+	)
+
+	state, err := service.RefreshAccountSnapshot(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "account data unavailable") {
+		t.Fatalf("err = %v, want account data unavailable", err)
+	}
+	if state.AccountSnapshot.Status != domain.AccountSnapshotFailed {
+		t.Fatalf("account status = %q, want failed", state.AccountSnapshot.Status)
+	}
+	if !strings.Contains(state.AccountSnapshot.Error, "account data unavailable") {
+		t.Fatalf("account error = %q, want scoped provider error", state.AccountSnapshot.Error)
+	}
+}
+
+func TestServiceMarksAccountSnapshotStaleOnDisconnect(t *testing.T) {
+	snapshot := domain.AccountSnapshot{
+		AvailableCashUSD: 12000,
+		BuyingPowerUSD:   22000,
+		SnapshotAt:       time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+	}
+	service := NewService(
+		storage.NewStore(filepath.Join(t.TempDir(), "app.db"), 20),
+		market.NewMockProvider(),
+		agent.NewMockClient(),
+		nil,
+		account.NewMockProvider(snapshot, nil),
+	)
+	if _, err := service.ConnectIBKR(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RefreshAccountSnapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := service.DisconnectIBKR(context.Background())
+	if err != nil {
+		t.Fatalf("DisconnectIBKR returned error: %v", err)
+	}
+	if state.AccountSnapshot.Status != domain.AccountSnapshotStale {
+		t.Fatalf("account status = %q, want stale", state.AccountSnapshot.Status)
+	}
+}
+
+func TestServiceMarksOldAccountSnapshotStale(t *testing.T) {
+	base := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	snapshot := domain.AccountSnapshot{
+		AvailableCashUSD: 12000,
+		BuyingPowerUSD:   22000,
+		SnapshotAt:       base,
+	}
+	service := NewService(
+		storage.NewStore(filepath.Join(t.TempDir(), "app.db"), 20),
+		market.NewMockProvider(),
+		agent.NewMockClient(),
+		nil,
+		account.NewMockProvider(snapshot, nil),
+	)
+	service.now = func() time.Time { return base.Add(6 * time.Minute) }
+	if _, err := service.RefreshAccountSnapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := service.GetState(context.Background())
+	if err != nil {
+		t.Fatalf("GetState returned error: %v", err)
+	}
+	if state.AccountSnapshot.Status != domain.AccountSnapshotStale {
+		t.Fatalf("account status = %q, want stale", state.AccountSnapshot.Status)
+	}
+}
+
+func TestServiceSaveSettingsPersistsMaxStockTradeAmountOnly(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "app.db")
+	store := storage.NewStore(dbPath, 20)
+	snapshot := domain.AccountSnapshot{
+		AvailableCashUSD: 12000,
+		BuyingPowerUSD:   22000,
+		SnapshotAt:       time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+	}
+	service := NewService(store, market.NewMockProvider(), agent.NewMockClient(), nil, account.NewMockProvider(snapshot, nil))
+	if _, err := service.RefreshAccountSnapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	settings := domain.DefaultSettings()
+	amount := 10000.0
+	settings.MaxStockTradeAmountUSD = &amount
+
+	if _, err := service.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatalf("SaveSettings returned error: %v", err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if loaded.Settings.MaxStockTradeAmountUSD == nil || *loaded.Settings.MaxStockTradeAmountUSD != 10000 {
+		t.Fatalf("stored max amount = %#v, want 10000", loaded.Settings.MaxStockTradeAmountUSD)
+	}
+	data, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Skipf("sqlite file not directly readable for snapshot scan: %v", err)
+	}
+	if strings.Contains(string(data), "available_cash_usd") || strings.Contains(string(data), "buying_power_usd") {
+		t.Fatalf("store file contains account snapshot data")
+	}
+}
+
+func TestServiceSaveSettingsRejectsInvalidMaxStockTradeAmount(t *testing.T) {
+	service := newTestService(t)
+	settings := domain.DefaultSettings()
+	invalid := 0.0
+	settings.MaxStockTradeAmountUSD = &invalid
+
+	_, err := service.SaveSettings(context.Background(), settings)
+	if err == nil || !strings.Contains(err.Error(), "max_stock_trade_amount_usd") {
+		t.Fatalf("err = %v, want max_stock_trade_amount_usd validation error", err)
 	}
 }
 
@@ -138,6 +299,144 @@ func TestServiceRunAnalysisNowUsesBarsAndAgentForSelectedSymbol(t *testing.T) {
 	}
 	if state.Symbols[1].Result == nil || state.Symbols[1].Result.Output.Direction != domain.DirectionLong {
 		t.Fatalf("result = %#v, want long", state.Symbols[1].Result)
+	}
+}
+
+func TestServiceRunAnalysisNowOmitsAccountContextWhenMaxAmountIsNotConfigured(t *testing.T) {
+	service := newTestService(t)
+	settings := domain.DefaultSettings()
+	settings.Watchlist = []string{"NVDA"}
+	settings.SelectedTimeframe = domain.Timeframe5m
+	if _, err := service.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ConnectIBKR(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 5, 30, 18, 0, 0, 0, time.UTC)
+	service.provider.(*market.MockProvider).SetHistoricalBars("NVDA", domain.Timeframe5m, []domain.Bar{
+		{Time: now.Add(-time.Minute), Open: 124, High: 126, Low: 123, Close: 125, Volume: 1000},
+		{Time: now, Open: 125, High: 127, Low: 124, Close: 126, Volume: 1400},
+	})
+	recorder := &recordingAgent{output: validServiceOutput()}
+	service.agentClient = recorder
+
+	if _, err := service.RunAnalysisNow(context.Background(), "NVDA"); err != nil {
+		t.Fatalf("RunAnalysisNow returned error: %v", err)
+	}
+	if len(recorder.inputs) != 1 {
+		t.Fatalf("agent calls = %d, want 1", len(recorder.inputs))
+	}
+	if recorder.inputs[0].AccountContext != nil {
+		t.Fatalf("account context = %#v, want nil without max stock trade amount", recorder.inputs[0].AccountContext)
+	}
+}
+
+func TestServiceRunAnalysisNowPassesSanitizedAccountContextWhenConfigured(t *testing.T) {
+	snapshot := domain.AccountSnapshot{
+		AvailableCashUSD: 15000,
+		BuyingPowerUSD:   30000,
+		SnapshotAt:       time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+		Positions: []domain.AccountPosition{
+			{Symbol: "NVDA", Quantity: 10, AverageCost: 100, MarketPrice: 120, MarketValueUSD: 1200, UnrealizedPnLUSD: 200},
+			{Symbol: "AAPL", Quantity: 5, AverageCost: 200, MarketPrice: 210, MarketValueUSD: 1050, UnrealizedPnLUSD: 50},
+			{Symbol: "MSFT", Quantity: 1, AverageCost: 300, MarketPrice: 320, MarketValueUSD: 320, UnrealizedPnLUSD: 20},
+		},
+	}
+	service := NewService(
+		storage.NewStore(filepath.Join(t.TempDir(), "app.db"), 20),
+		market.NewMockProvider(),
+		agent.NewMockClient(),
+		nil,
+		account.NewMockProvider(snapshot, nil),
+	)
+	settings := domain.DefaultSettings()
+	settings.Watchlist = []string{"NVDA", "AAPL"}
+	amount := 5000.0
+	settings.MaxStockTradeAmountUSD = &amount
+	if _, err := service.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ConnectIBKR(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RefreshAccountSnapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 5, 30, 18, 0, 0, 0, time.UTC)
+	service.provider.(*market.MockProvider).SetHistoricalBars("NVDA", domain.Timeframe5m, []domain.Bar{
+		{Time: now.Add(-time.Minute), Open: 124, High: 126, Low: 123, Close: 125, Volume: 1000},
+		{Time: now, Open: 125, High: 127, Low: 124, Close: 126, Volume: 1400},
+	})
+	recorder := &recordingAgent{output: validServiceOutput()}
+	service.agentClient = recorder
+
+	if _, err := service.RunAnalysisNow(context.Background(), "NVDA"); err != nil {
+		t.Fatalf("RunAnalysisNow returned error: %v", err)
+	}
+	if len(recorder.inputs) != 1 {
+		t.Fatalf("agent calls = %d, want 1", len(recorder.inputs))
+	}
+	context := recorder.inputs[0].AccountContext
+	if context == nil {
+		t.Fatal("account context = nil, want sanitized account context")
+	}
+	if context.AvailableCashUSD != 15000 || context.BuyingPowerUSD != 30000 || context.MaxStockTradeAmountUSD != 5000 {
+		t.Fatalf("account context = %#v, want cash/buying power/max", context)
+	}
+	if len(context.Positions) != 2 {
+		t.Fatalf("positions = %#v, want only watchlist positions", context.Positions)
+	}
+	for _, position := range context.Positions {
+		if position.Symbol == "MSFT" {
+			t.Fatalf("account context leaked non-watchlist position: %#v", context.Positions)
+		}
+	}
+	if context.SizingEnvelope == nil || context.SizingEnvelope.Symbol != "NVDA" || context.SizingEnvelope.AdvisoryNotionalCapUSD <= 0 {
+		t.Fatalf("sizing envelope = %#v, want NVDA advisory envelope", context.SizingEnvelope)
+	}
+}
+
+func TestServiceRunAnalysisNowStoresCurrentSymbolAccountContextInState(t *testing.T) {
+	snapshot := domain.AccountSnapshot{
+		AvailableCashUSD: 15000,
+		BuyingPowerUSD:   30000,
+		SnapshotAt:       time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+		Positions:        []domain.AccountPosition{{Symbol: "NVDA", Quantity: 10, AverageCost: 100, MarketValueUSD: 1000}},
+	}
+	service := NewService(
+		storage.NewStore(filepath.Join(t.TempDir(), "app.db"), 20),
+		market.NewMockProvider(),
+		agent.NewMockClient(),
+		nil,
+		account.NewMockProvider(snapshot, nil),
+	)
+	settings := domain.DefaultSettings()
+	settings.Watchlist = []string{"NVDA"}
+	amount := 5000.0
+	settings.MaxStockTradeAmountUSD = &amount
+	if _, err := service.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ConnectIBKR(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RefreshAccountSnapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 5, 30, 18, 0, 0, 0, time.UTC)
+	service.provider.(*market.MockProvider).SetHistoricalBars("NVDA", domain.Timeframe5m, []domain.Bar{
+		{Time: now.Add(-time.Minute), Open: 124, High: 126, Low: 123, Close: 125, Volume: 1000},
+		{Time: now, Open: 125, High: 127, Low: 124, Close: 126, Volume: 1400},
+	})
+	service.agentClient = &recordingAgent{output: validServiceOutput()}
+
+	state, err := service.RunAnalysisNow(context.Background(), "NVDA")
+	if err != nil {
+		t.Fatalf("RunAnalysisNow returned error: %v", err)
+	}
+	if state.Symbols[0].AccountContext == nil || state.Symbols[0].AccountContext.SizingEnvelope == nil {
+		t.Fatalf("symbol account context = %#v, want sizing context", state.Symbols[0].AccountContext)
 	}
 }
 

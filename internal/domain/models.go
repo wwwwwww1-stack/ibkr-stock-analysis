@@ -189,13 +189,14 @@ func copyDerivedFeaturesPtr(value *DerivedFeatures) *DerivedFeatures {
 }
 
 type AgentInput struct {
-	Symbol                string             `json:"symbol"`
-	Timeframe             Timeframe          `json:"timeframe"`
-	CurrentPrice          float64            `json:"current_price"`
-	Bars                  []Bar              `json:"bars"`
-	Derived               DerivedFeatures    `json:"derived"`
-	MultiTimeframeContext []TimeframeContext `json:"multi_timeframe_context,omitempty"`
-	ChartImage            *ChartImageInput   `json:"chart_image,omitempty"`
+	Symbol                string                  `json:"symbol"`
+	Timeframe             Timeframe               `json:"timeframe"`
+	CurrentPrice          float64                 `json:"current_price"`
+	Bars                  []Bar                   `json:"bars"`
+	Derived               DerivedFeatures         `json:"derived"`
+	MultiTimeframeContext []TimeframeContext      `json:"multi_timeframe_context,omitempty"`
+	ChartImage            *ChartImageInput        `json:"chart_image,omitempty"`
+	AccountContext        *AccountSnapshotContext `json:"account_context,omitempty"`
 }
 
 type EntryZone struct {
@@ -213,23 +214,126 @@ const (
 	SetupQualityNone  SetupQuality = "none"
 )
 
+type AccountSnapshotStatus string
+
+const (
+	AccountSnapshotUnavailable AccountSnapshotStatus = "unavailable"
+	AccountSnapshotLoading     AccountSnapshotStatus = "loading"
+	AccountSnapshotReady       AccountSnapshotStatus = "ready"
+	AccountSnapshotStale       AccountSnapshotStatus = "stale"
+	AccountSnapshotFailed      AccountSnapshotStatus = "failed"
+)
+
+type SizingStatus string
+
+const (
+	SizingStatusAvailable                SizingStatus = "available"
+	SizingStatusBlockedByCash            SizingStatus = "blocked_by_cash"
+	SizingStatusBlockedByCap             SizingStatus = "blocked_by_cap"
+	SizingStatusExistingPositionOverCap  SizingStatus = "existing_position_over_cap"
+	SizingStatusMissingAccountSnapshot   SizingStatus = "missing_account_snapshot"
+	SizingStatusMissingDirectionalLevels SizingStatus = "missing_directional_levels"
+	SizingStatusNotAPlus                 SizingStatus = "not_a_plus"
+	SizingStatusNoTrade                  SizingStatus = "no_trade"
+)
+
+type AdvisoryAction string
+
+const (
+	AdvisoryActionNoTrade        AdvisoryAction = "no_trade"
+	AdvisoryActionWatch          AdvisoryAction = "watch"
+	AdvisoryActionConsiderSetup  AdvisoryAction = "consider_setup"
+	AdvisoryActionManageExisting AdvisoryAction = "manage_existing"
+	AdvisoryActionReviewRisk     AdvisoryAction = "review_risk"
+)
+
+type AccountSnapshotState struct {
+	Status    AccountSnapshotStatus `json:"status"`
+	Snapshot  *AccountSnapshot      `json:"snapshot,omitempty"`
+	Error     string                `json:"error,omitempty"`
+	UpdatedAt *time.Time            `json:"updated_at,omitempty"`
+}
+
+type AccountSnapshot struct {
+	AvailableCashUSD float64           `json:"available_cash_usd"`
+	BuyingPowerUSD   float64           `json:"buying_power_usd"`
+	SnapshotAt       time.Time         `json:"snapshot_at"`
+	Positions        []AccountPosition `json:"positions"`
+	Notes            []string          `json:"notes,omitempty"`
+}
+
+type AccountPosition struct {
+	Symbol           string  `json:"symbol"`
+	Quantity         float64 `json:"quantity"`
+	AverageCost      float64 `json:"average_cost"`
+	MarketPrice      float64 `json:"market_price"`
+	MarketValueUSD   float64 `json:"market_value_usd"`
+	UnrealizedPnLUSD float64 `json:"unrealized_pnl_usd"`
+}
+
+type SizingEnvelope struct {
+	Symbol                      string       `json:"symbol"`
+	SizingStatus                SizingStatus `json:"sizing_status"`
+	AccountNotionalAvailableUSD float64      `json:"account_notional_available_usd"`
+	UserNotionalCapUSD          float64      `json:"user_notional_cap_usd"`
+	NewExposureCapUSD           float64      `json:"new_exposure_cap_usd"`
+	ExistingSymbolExposureUSD   float64      `json:"existing_symbol_exposure_usd"`
+	RemainingSymbolCapUSD       float64      `json:"remaining_symbol_cap_usd"`
+	AdvisoryNotionalCapUSD      float64      `json:"advisory_notional_cap_usd"`
+	ReferenceEntryPrice         *float64     `json:"reference_entry_price,omitempty"`
+	AdvisoryMaxShares           *int         `json:"advisory_max_shares,omitempty"`
+	RiskPerShare                *float64     `json:"risk_per_share,omitempty"`
+	EstimatedRiskUSD            *float64     `json:"estimated_risk_usd,omitempty"`
+}
+
+type AccountSnapshotContext struct {
+	AvailableCashUSD       float64                  `json:"available_cash_usd"`
+	BuyingPowerUSD         float64                  `json:"buying_power_usd"`
+	SnapshotAt             time.Time                `json:"snapshot_at"`
+	Positions              []AccountPositionContext `json:"positions"`
+	MaxStockTradeAmountUSD float64                  `json:"max_stock_trade_amount_usd"`
+	SizingEnvelope         *SizingEnvelope          `json:"sizing_envelope,omitempty"`
+}
+
+type AccountPositionContext struct {
+	Symbol           string  `json:"symbol"`
+	Quantity         float64 `json:"quantity"`
+	AverageCost      float64 `json:"average_cost"`
+	MarketPrice      float64 `json:"market_price"`
+	MarketValueUSD   float64 `json:"market_value_usd"`
+	UnrealizedPnLUSD float64 `json:"unrealized_pnl_usd"`
+}
+
 type AgentOutput struct {
-	Direction        Direction    `json:"direction"`
-	SetupQuality     SetupQuality `json:"setup_quality"`
-	EntryZone        *EntryZone   `json:"entry_zone,omitempty"`
-	StopLoss         *float64     `json:"stop_loss,omitempty"`
-	TakeProfit       []float64    `json:"take_profit"`
-	RiskReward       *float64     `json:"risk_reward,omitempty"`
-	Confidence       float64      `json:"confidence"`
-	MarketRegime     string       `json:"market_regime"`
-	TradeThesis      string       `json:"trade_thesis"`
-	Counterargument  string       `json:"counterargument"`
-	NoTradeReason    string       `json:"no_trade_reason"`
-	RejectionReasons []string     `json:"rejection_reasons"`
-	Summary          string       `json:"summary"`
-	PriceAction      []string     `json:"price_action"`
-	InvalidatedIf    string       `json:"invalidated_if"`
-	GeneratedAt      time.Time    `json:"generated_at"`
+	Direction          Direction                 `json:"direction"`
+	SetupQuality       SetupQuality              `json:"setup_quality"`
+	EntryZone          *EntryZone                `json:"entry_zone,omitempty"`
+	StopLoss           *float64                  `json:"stop_loss,omitempty"`
+	TakeProfit         []float64                 `json:"take_profit"`
+	RiskReward         *float64                  `json:"risk_reward,omitempty"`
+	Confidence         float64                   `json:"confidence"`
+	MarketRegime       string                    `json:"market_regime"`
+	TradeThesis        string                    `json:"trade_thesis"`
+	Counterargument    string                    `json:"counterargument"`
+	NoTradeReason      string                    `json:"no_trade_reason"`
+	RejectionReasons   []string                  `json:"rejection_reasons"`
+	Summary            string                    `json:"summary"`
+	PriceAction        []string                  `json:"price_action"`
+	InvalidatedIf      string                    `json:"invalidated_if"`
+	GeneratedAt        time.Time                 `json:"generated_at"`
+	PositionManagement *PositionManagementOutput `json:"position_management,omitempty"`
+}
+
+type PositionManagementOutput struct {
+	AccountAware           bool           `json:"account_aware"`
+	SizingStatus           SizingStatus   `json:"sizing_status"`
+	AdvisoryAction         AdvisoryAction `json:"advisory_action"`
+	AdvisoryMaxShares      *int           `json:"advisory_max_shares,omitempty"`
+	AdvisoryNotionalCapUSD *float64       `json:"advisory_notional_cap_usd,omitempty"`
+	EstimatedRiskUSD       *float64       `json:"estimated_risk_usd,omitempty"`
+	ExistingExposureUSD    *float64       `json:"existing_exposure_usd,omitempty"`
+	ManagementNotes        []string       `json:"management_notes"`
+	ManualReviewRequired   bool           `json:"manual_review_required"`
 }
 
 func (o AgentOutput) Validate() error {
@@ -498,23 +602,25 @@ type BacktestReport struct {
 }
 
 type SymbolState struct {
-	Symbol            string          `json:"symbol"`
-	MarketDataStatus  string          `json:"market_data_status"`
-	LastClosedBarTime *time.Time      `json:"last_closed_bar_time,omitempty"`
-	LastAnalysisTime  *time.Time      `json:"last_analysis_time,omitempty"`
-	JobStatus         JobStatus       `json:"job_status"`
-	CurrentPrice      *float64        `json:"current_price,omitempty"`
-	Result            *AnalysisResult `json:"result,omitempty"`
-	Error             string          `json:"error,omitempty"`
+	Symbol            string                  `json:"symbol"`
+	MarketDataStatus  string                  `json:"market_data_status"`
+	LastClosedBarTime *time.Time              `json:"last_closed_bar_time,omitempty"`
+	LastAnalysisTime  *time.Time              `json:"last_analysis_time,omitempty"`
+	JobStatus         JobStatus               `json:"job_status"`
+	CurrentPrice      *float64                `json:"current_price,omitempty"`
+	Result            *AnalysisResult         `json:"result,omitempty"`
+	AccountContext    *AccountSnapshotContext `json:"account_context,omitempty"`
+	Error             string                  `json:"error,omitempty"`
 }
 
 type Settings struct {
-	IBKRHost          string       `json:"ibkr_host"`
-	IBKRPort          int          `json:"ibkr_port"`
-	IBKRClientID      int          `json:"ibkr_client_id"`
-	Watchlist         []string     `json:"watchlist"`
-	SelectedTimeframe Timeframe    `json:"selected_timeframe"`
-	ChartWindow       *ChartWindow `json:"chart_window,omitempty"`
+	IBKRHost               string       `json:"ibkr_host"`
+	IBKRPort               int          `json:"ibkr_port"`
+	IBKRClientID           int          `json:"ibkr_client_id"`
+	Watchlist              []string     `json:"watchlist"`
+	SelectedTimeframe      Timeframe    `json:"selected_timeframe"`
+	ChartWindow            *ChartWindow `json:"chart_window,omitempty"`
+	MaxStockTradeAmountUSD *float64     `json:"max_stock_trade_amount_usd,omitempty"`
 }
 
 type ChartWindow struct {
@@ -558,10 +664,21 @@ func (s Settings) Normalize() Settings {
 	return s
 }
 
+func (s Settings) Validate() error {
+	if s.MaxStockTradeAmountUSD != nil {
+		amount := *s.MaxStockTradeAmountUSD
+		if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+			return fmt.Errorf("max_stock_trade_amount_usd must be a positive finite number")
+		}
+	}
+	return nil
+}
+
 type AppState struct {
-	Settings                 Settings         `json:"settings"`
-	ConnectionStatus         ConnectionStatus `json:"connection_status"`
-	ScheduledAnalysisEnabled bool             `json:"scheduled_analysis_enabled"`
-	Symbols                  []SymbolState    `json:"symbols"`
-	LastError                string           `json:"last_error,omitempty"`
+	Settings                 Settings             `json:"settings"`
+	ConnectionStatus         ConnectionStatus     `json:"connection_status"`
+	ScheduledAnalysisEnabled bool                 `json:"scheduled_analysis_enabled"`
+	Symbols                  []SymbolState        `json:"symbols"`
+	AccountSnapshot          AccountSnapshotState `json:"account_snapshot"`
+	LastError                string               `json:"last_error,omitempty"`
 }

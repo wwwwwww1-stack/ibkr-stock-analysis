@@ -14,6 +14,8 @@ export function GetState():Promise<domain.AppState>;
 
 export function ListChartWindows():Promise<Array<domain.ChartWindow>>;
 
+export function RefreshAccountSnapshot():Promise<domain.AppState>;
+
 export function RunAnalysisNow(arg1:string):Promise<domain.AppState>;
 
 export function RunBacktest(arg1:domain.BacktestRequest):Promise<domain.BacktestReport>;

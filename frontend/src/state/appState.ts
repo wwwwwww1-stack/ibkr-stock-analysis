@@ -50,6 +50,9 @@ export function defaultState(): AppState {
     },
     connection_status: 'disconnected',
     scheduled_analysis_enabled: false,
+    account_snapshot: {
+      status: 'unavailable',
+    },
     symbols: [],
   };
 }

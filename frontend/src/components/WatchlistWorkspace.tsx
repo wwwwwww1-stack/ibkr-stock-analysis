@@ -188,12 +188,8 @@ export function WatchlistWorkspace({
               })}
               <div className="watchlist-add-item" role="listitem">
                 {isAddingSymbol ? (
-                  <form
+                  <div
                     className="watchlist-add-form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      addSymbols(draftSymbol);
-                    }}
                   >
                     <input
                       id="watchlist-symbol-input"
@@ -205,7 +201,7 @@ export function WatchlistWorkspace({
                       onKeyDown={handleDraftKeyDown}
                       onPaste={handleDraftPaste}
                     />
-                    <button type="submit" disabled={!symbolsFromWatchlist(draftSymbol).length}>
+                    <button type="button" disabled={!symbolsFromWatchlist(draftSymbol).length} onClick={() => addSymbols(draftSymbol)}>
                       Add
                     </button>
                     <button
@@ -217,7 +213,7 @@ export function WatchlistWorkspace({
                     >
                       Cancel
                     </button>
-                  </form>
+                  </div>
                 ) : (
                   <button type="button" className="watchlist-add-button" onClick={() => setIsAddingSymbol(true)}>
                     Add symbol

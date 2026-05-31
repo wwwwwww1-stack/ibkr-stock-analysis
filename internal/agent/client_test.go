@@ -94,6 +94,64 @@ func TestBuildCodexPromptIncludesMarketDataAndSafetyInstructions(t *testing.T) {
 	assertContains(t, prompt, `"timeframe": "5m"`)
 }
 
+func TestBuildCodexPromptIncludesSanitizedAccountContextWhenPresent(t *testing.T) {
+	input := validAgentInput()
+	maxShares := 50
+	input.AccountContext = &domain.AccountSnapshotContext{
+		AvailableCashUSD:       15000,
+		BuyingPowerUSD:         30000,
+		SnapshotAt:             time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+		MaxStockTradeAmountUSD: 5000,
+		Positions: []domain.AccountPositionContext{{
+			Symbol:           "NVDA",
+			Quantity:         10,
+			AverageCost:      100,
+			MarketPrice:      120,
+			MarketValueUSD:   1200,
+			UnrealizedPnLUSD: 200,
+		}},
+		SizingEnvelope: &domain.SizingEnvelope{
+			Symbol:                 "NVDA",
+			SizingStatus:           domain.SizingStatusAvailable,
+			AdvisoryNotionalCapUSD: 5000,
+			AdvisoryMaxShares:      &maxShares,
+		},
+	}
+
+	prompt, err := BuildCodexPrompt(input, time.Date(2026, 5, 31, 12, 5, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatalf("BuildCodexPrompt returned error: %v", err)
+	}
+
+	assertContains(t, prompt, "Use only the supplied sanitized account snapshot, configured maximum stock trade amount, and sizing envelope.")
+	assertContains(t, prompt, "Treat all position-management output as advisory and manually reviewed.")
+	assertContains(t, prompt, "Require manual_review_required to be true whenever position_management is not null.")
+	assertContains(t, prompt, `"account_context"`)
+	assertContains(t, prompt, `"available_cash_usd": 15000`)
+	assertContains(t, prompt, `"max_stock_trade_amount_usd": 5000`)
+	assertContains(t, prompt, `"advisory_max_shares": 50`)
+	assertContains(t, prompt, `"symbol": "NVDA"`)
+	for _, forbidden := range []string{"DU123", "credential", "open_orders", "order_payload", "/Users/"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt leaked forbidden account detail %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildCodexPromptOmitsAccountContextWhenAbsent(t *testing.T) {
+	input := validAgentInput()
+
+	prompt, err := BuildCodexPrompt(input, time.Date(2026, 5, 31, 12, 5, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatalf("BuildCodexPrompt returned error: %v", err)
+	}
+
+	assertContains(t, prompt, "Do not claim to access accounts, portfolio data, positions, balances, or live brokerage state.")
+	if strings.Contains(prompt, `"account_context"`) {
+		t.Fatalf("prompt should omit account_context when absent:\n%s", prompt)
+	}
+}
+
 func TestBuildCodexPromptIncludesMultiTimeframeContextInstructions(t *testing.T) {
 	input := validAgentInput()
 	currentPrice := 128.0
@@ -352,6 +410,36 @@ func TestAgentOutputSchemaIncludesAPlusTraderReviewFields(t *testing.T) {
 	}
 	assertContains(t, string(schema.Properties["setup_quality"]), `"a_plus"`)
 	assertContains(t, string(schema.Properties["setup_quality"]), `"none"`)
+}
+
+func TestAgentOutputSchemaIncludesPositionManagementContract(t *testing.T) {
+	var schema struct {
+		Required   []string                   `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(agentOutputJSONSchema), &schema); err != nil {
+		t.Fatalf("agentOutputJSONSchema is invalid JSON: %v", err)
+	}
+	required := make(map[string]bool, len(schema.Required))
+	for _, name := range schema.Required {
+		required[name] = true
+	}
+	if !required["position_management"] {
+		t.Fatalf("position_management must be required for Codex strict schema")
+	}
+	positionSchema := string(schema.Properties["position_management"])
+	for _, fragment := range []string{
+		`"available"`,
+		`"blocked_by_cash"`,
+		`"existing_position_over_cap"`,
+		`"no_trade"`,
+		`"consider_setup"`,
+		`"manage_existing"`,
+		`"manual_review_required"`,
+		`"type": "null"`,
+	} {
+		assertContains(t, positionSchema, fragment)
+	}
 }
 
 func ptr(v float64) *float64 { return &v }

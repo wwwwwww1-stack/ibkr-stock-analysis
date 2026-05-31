@@ -10,27 +10,31 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ibkr-stock-analysis/internal/account"
 	"ibkr-stock-analysis/internal/domain"
 
 	"github.com/scmhub/ibapi"
 )
 
 type IBKRProvider struct {
-	mu      sync.Mutex
-	state   ProviderState
-	wrapper *ibkrWrapper
-	client  *ibapi.EClient
-	nextID  atomic.Int64
+	mu            sync.Mutex
+	state         ProviderState
+	wrapper       *ibkrWrapper
+	client        *ibapi.EClient
+	nextID        atomic.Int64
+	accountEvents *account.IBKREventHub
 }
 
 func NewIBKRProvider() *IBKRProvider {
-	wrapper := newIBKRWrapper()
+	accountEvents := account.NewIBKREventHub()
+	wrapper := newIBKRWrapper(accountEvents)
 	provider := &IBKRProvider{
 		state: ProviderState{
 			Status:    domain.ConnectionDisconnected,
 			UpdatedAt: time.Now().UTC(),
 		},
-		wrapper: wrapper,
+		wrapper:       wrapper,
+		accountEvents: accountEvents,
 	}
 	provider.client = ibapi.NewEClient(wrapper)
 	provider.nextID.Store(1000)
@@ -68,6 +72,18 @@ func (p *IBKRProvider) State() ProviderState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.state
+}
+
+func (p *IBKRProvider) AccountSnapshotClient() account.IBKRAccountClient {
+	return p.client
+}
+
+func (p *IBKRProvider) AccountSnapshotEvents() *account.IBKREventHub {
+	return p.accountEvents
+}
+
+func (p *IBKRProvider) NextAccountRequestID() int64 {
+	return p.nextID.Add(1)
 }
 
 func (p *IBKRProvider) Subscribe(ctx context.Context, symbol string, timeframe domain.Timeframe) (<-chan BarUpdate, Unsubscribe, error) {
@@ -254,17 +270,19 @@ type realtimeSubscription struct {
 
 type ibkrWrapper struct {
 	ibapi.Wrapper
-	mu         sync.Mutex
-	historical map[int64][]domain.Bar
-	results    map[int64]historicalResult
-	realtime   map[int64]realtimeSubscription
+	mu            sync.Mutex
+	historical    map[int64][]domain.Bar
+	results       map[int64]historicalResult
+	realtime      map[int64]realtimeSubscription
+	accountEvents *account.IBKREventHub
 }
 
-func newIBKRWrapper() *ibkrWrapper {
+func newIBKRWrapper(accountEvents *account.IBKREventHub) *ibkrWrapper {
 	return &ibkrWrapper{
-		historical: make(map[int64][]domain.Bar),
-		results:    make(map[int64]historicalResult),
-		realtime:   make(map[int64]realtimeSubscription),
+		historical:    make(map[int64][]domain.Bar),
+		results:       make(map[int64]historicalResult),
+		realtime:      make(map[int64]realtimeSubscription),
+		accountEvents: accountEvents,
 	}
 }
 
@@ -312,6 +330,9 @@ func (w *ibkrWrapper) Error(reqID int64, errorTime int64, errCode int64, errStri
 	if result, ok := w.results[reqID]; ok {
 		result.errs <- fmt.Errorf("ibkr error %d: %s", errCode, errString)
 	}
+	if w.accountEvents != nil {
+		w.accountEvents.Error(reqID, fmt.Errorf("ibkr error %d: %s", errCode, errString))
+	}
 }
 
 func (w *ibkrWrapper) addRealtime(reqID int64, symbol string, timeframe domain.Timeframe, updates chan BarUpdate) {
@@ -350,6 +371,41 @@ func (w *ibkrWrapper) RealtimeBar(reqID int64, unixTime int64, open float64, hig
 	case subscription.updates <- update:
 	default:
 	}
+}
+
+func (w *ibkrWrapper) AccountSummary(reqID int64, accountID string, tag string, value string, currency string) {
+	if w.accountEvents == nil {
+		return
+	}
+	w.accountEvents.AccountSummary(reqID, accountID, tag, value, currency)
+}
+
+func (w *ibkrWrapper) AccountSummaryEnd(reqID int64) {
+	if w.accountEvents == nil {
+		return
+	}
+	w.accountEvents.AccountSummaryEnd(reqID)
+}
+
+func (w *ibkrWrapper) Position(accountID string, contract *ibapi.Contract, position ibapi.Decimal, avgCost float64) {
+	if w.accountEvents == nil || contract == nil {
+		return
+	}
+	w.accountEvents.Position(account.IBKRPositionEvent{
+		Account:      accountID,
+		Symbol:       contract.Symbol,
+		SecurityType: contract.SecType,
+		Currency:     contract.Currency,
+		Quantity:     decimalToFloat64(position),
+		AverageCost:  avgCost,
+	})
+}
+
+func (w *ibkrWrapper) PositionEnd() {
+	if w.accountEvents == nil {
+		return
+	}
+	w.accountEvents.PositionEnd()
 }
 
 func convertIBKRBar(bar *ibapi.Bar) (domain.Bar, error) {
@@ -394,6 +450,14 @@ func decimalToInt64(value ibapi.Decimal) int64 {
 	}
 	if f, err := strconv.ParseFloat(text, 64); err == nil {
 		return int64(f)
+	}
+	return 0
+}
+
+func decimalToFloat64(value ibapi.Decimal) float64 {
+	text := value.String()
+	if f, err := strconv.ParseFloat(text, 64); err == nil {
+		return f
 	}
 	return 0
 }

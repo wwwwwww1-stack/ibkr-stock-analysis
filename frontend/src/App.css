@@ -589,18 +589,21 @@ button.primary:hover:not(:disabled) {
 }
 
 .status-dot.connected,
+.status-dot.ready,
 .job-status.complete {
   background: rgba(36, 138, 61, 0.12);
   color: var(--green);
 }
 
 .status-dot.disconnected,
+.status-dot.unavailable,
 .job-status.idle {
   background: rgba(118, 126, 138, 0.14);
   color: #626a73;
 }
 
 .status-dot.connecting,
+.status-dot.loading,
 .job-status.queued,
 .job-status.analyzing {
   background: rgba(10, 132, 255, 0.12);
@@ -612,6 +615,11 @@ button.primary:hover:not(:disabled) {
 .job-status.no_data {
   background: rgba(215, 0, 21, 0.1);
   color: var(--red);
+}
+
+.status-dot.stale {
+  background: rgba(255, 204, 0, 0.18);
+  color: var(--amber);
 }
 
 .stale {
@@ -672,6 +680,10 @@ button.primary:hover:not(:disabled) {
 .signal-table {
   grid-area: signals;
   overflow: auto;
+}
+
+.signal-list table {
+  min-width: 1320px;
 }
 
 .signal-table-header {
@@ -813,39 +825,67 @@ th {
 }
 
 th:nth-child(1) {
-  width: 10%;
+  width: 72px;
 }
 
 th:nth-child(2) {
-  width: 10%;
+  width: 78px;
 }
 
 th:nth-child(3) {
-  width: 10%;
+  width: 76px;
 }
 
 th:nth-child(4) {
-  width: 14%;
+  width: 72px;
 }
 
 th:nth-child(5) {
-  width: 10%;
+  width: 92px;
 }
 
 th:nth-child(6) {
-  width: 15%;
+  width: 104px;
 }
 
 th:nth-child(7) {
-  width: 7%;
+  width: 68px;
 }
 
 th:nth-child(8) {
-  width: 8%;
+  width: 118px;
 }
 
 th:nth-child(9) {
-  width: 16%;
+  width: 72px;
+}
+
+th:nth-child(10) {
+  width: 110px;
+}
+
+th:nth-child(11) {
+  width: 76px;
+}
+
+th:nth-child(12) {
+  width: 126px;
+}
+
+th:nth-child(13) {
+  width: 56px;
+}
+
+th:nth-child(14) {
+  width: 58px;
+}
+
+th:nth-child(15) {
+  width: 142px;
+}
+
+th:nth-child(16) {
+  width: 112px;
 }
 
 tbody tr {
@@ -920,6 +960,61 @@ td:first-child {
 .detail-panel ul {
   margin: 0;
   padding-left: 18px;
+}
+
+.account-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-error {
+  min-width: 0;
+  color: var(--red);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.account-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.account-metrics div {
+  min-width: 0;
+}
+
+.account-metrics dd {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-context-panel dl,
+.position-management-panel dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.account-context-panel dl div,
+.position-management-panel dl div {
+  min-width: 0;
+}
+
+.account-context-panel dd,
+.position-management-panel dd {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.position-management-panel ul {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .settings-workspace {
@@ -1465,7 +1560,7 @@ dd {
   }
 
   table {
-    min-width: 860px;
+    min-width: 1320px;
   }
 
   .backtest-trades {

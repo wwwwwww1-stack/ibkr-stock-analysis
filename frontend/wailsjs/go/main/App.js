@@ -26,6 +26,10 @@ export function ListChartWindows() {
   return window['go']['main']['App']['ListChartWindows']();
 }
 
+export function RefreshAccountSnapshot() {
+  return window['go']['main']['App']['RefreshAccountSnapshot']();
+}
+
 export function RunAnalysisNow(arg1) {
   return window['go']['main']['App']['RunAnalysisNow'](arg1);
 }

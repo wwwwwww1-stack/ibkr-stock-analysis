@@ -12,6 +12,9 @@ const baseState: AppState = {
   },
   connection_status: 'disconnected',
   scheduled_analysis_enabled: false,
+  account_snapshot: {
+    status: 'unavailable',
+  },
   symbols: [
     {
       symbol: 'NVDA',

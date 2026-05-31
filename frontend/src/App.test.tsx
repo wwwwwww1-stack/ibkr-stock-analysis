@@ -15,6 +15,9 @@ const emptyState: AppState = {
   },
   connection_status: 'disconnected',
   scheduled_analysis_enabled: false,
+  account_snapshot: {
+    status: 'unavailable',
+  },
   symbols: [],
 };
 
@@ -158,6 +161,104 @@ describe('App workspace', () => {
     expect(screen.queryByLabelText('Backtest details')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Analyze/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Screenshot Analyze/i })).not.toBeInTheDocument();
+  });
+
+  it('renders account snapshot status and saves maximum stock trade amount from settings', async () => {
+    const state: AppState = {
+      ...emptyState,
+      connection_status: 'connected',
+      account_snapshot: {
+        status: 'ready',
+        snapshot: {
+          available_cash_usd: 12500,
+          buying_power_usd: 25000,
+          snapshot_at: '2026-05-31T12:00:00Z',
+          positions: [{ symbol: 'NVDA', quantity: 10, average_cost: 100, market_price: 120, market_value_usd: 1200, unrealized_pnl_usd: 200 }],
+        },
+      },
+    };
+    const backend = mockBackend(state);
+    backend.saveSettings = vi.fn(async (settings): Promise<AppState> => ({
+      ...state,
+      settings,
+    }));
+
+    render(<App backend={backend} />);
+    await screen.findByText('IBKR AI Analysis');
+
+    await userEvent.click(screen.getByRole('button', { name: /Settings/i }));
+    const accountSection = screen.getByLabelText('Account snapshot settings');
+    expect(within(accountSection).getByText('ready')).toBeInTheDocument();
+    expect(within(accountSection).getByText('$12,500.00')).toBeInTheDocument();
+    expect(within(accountSection).getByText('$25,000.00')).toBeInTheDocument();
+    expect(within(accountSection).getByText('1')).toBeInTheDocument();
+
+    await userEvent.type(within(accountSection).getByLabelText('Maximum stock trade amount'), '10000');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(backend.saveSettings).toHaveBeenCalledWith({
+        ...state.settings,
+        max_stock_trade_amount_usd: 10000,
+      }),
+    );
+  });
+
+  it('refreshes account snapshot from settings and shows loading before success', async () => {
+    const state: AppState = { ...emptyState, connection_status: 'connected' };
+    const backend = mockBackend(state);
+    const pending = deferred<AppState>();
+    backend.refreshAccountSnapshot = vi.fn<BackendAPI['refreshAccountSnapshot']>().mockReturnValue(pending.promise);
+
+    render(<App backend={backend} />);
+    await screen.findByText('IBKR AI Analysis');
+    await userEvent.click(screen.getByRole('button', { name: /Settings/i }));
+    const accountSection = screen.getByLabelText('Account snapshot settings');
+
+    await userEvent.click(within(accountSection).getByRole('button', { name: 'Refresh Account Snapshot' }));
+
+    expect(within(accountSection).getByText('loading')).toBeInTheDocument();
+    await act(async () => {
+      pending.resolve({
+        ...state,
+        account_snapshot: {
+          status: 'ready',
+          snapshot: {
+            available_cash_usd: 8000,
+            buying_power_usd: 16000,
+            snapshot_at: '2026-05-31T12:00:00Z',
+            positions: [],
+          },
+        },
+      });
+      await pending.promise;
+    });
+    expect(within(accountSection).getByText('ready')).toBeInTheDocument();
+    expect(within(accountSection).getByText('$8,000.00')).toBeInTheDocument();
+  });
+
+  it('shows account refresh and invalid max amount errors without execution controls', async () => {
+    const backend = mockBackend({ ...emptyState, connection_status: 'connected' });
+    backend.refreshAccountSnapshot = vi.fn(async () => {
+      throw new Error('account data unavailable');
+    });
+    backend.saveSettings = vi.fn(async () => {
+      throw new Error('max_stock_trade_amount_usd must be positive');
+    });
+
+    render(<App backend={backend} />);
+    await screen.findByText('IBKR AI Analysis');
+    await userEvent.click(screen.getByRole('button', { name: /Settings/i }));
+    const accountSection = screen.getByLabelText('Account snapshot settings');
+
+    await userEvent.click(within(accountSection).getByRole('button', { name: 'Refresh Account Snapshot' }));
+    await waitFor(() => expect(screen.getAllByText('account data unavailable').length).toBeGreaterThan(0));
+
+    await userEvent.type(within(accountSection).getByLabelText('Maximum stock trade amount'), '-1');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('max_stock_trade_amount_usd must be positive')).toBeInTheDocument();
+
+    expect(accountSection).not.toHaveTextContent(forbiddenExecutionCopyPattern());
   });
 
   it('keeps the completed backtest report when watchlist selection changes', async () => {
@@ -822,6 +923,67 @@ describe('App workspace', () => {
     expect(within(signals).getAllByRole('row', { name: /NVDA long 125.30/i })).toHaveLength(1);
   });
 
+  it('shows advisory account columns in current scanner rows', async () => {
+    const result = analysisResult('NVDA', 'long', 'Price reclaimed the prior high.');
+    result.output.position_management = {
+      account_aware: true,
+      sizing_status: 'available',
+      advisory_action: 'consider_setup',
+      advisory_max_shares: 30,
+      advisory_notional_cap_usd: 3800,
+      estimated_risk_usd: 90,
+      existing_exposure_usd: 1200,
+      manual_review_required: true,
+      management_notes: ['手动复核：等待触发。'],
+    };
+    const state: AppState = {
+      ...emptyState,
+      connection_status: 'connected',
+      settings: { ...emptyState.settings, watchlist: ['NVDA', 'AAPL'] },
+      symbols: [
+        {
+          symbol: 'NVDA',
+          market_data_status: 'ready',
+          job_status: 'complete' as const,
+          current_price: 126,
+          account_context: {
+            available_cash_usd: 15000,
+            buying_power_usd: 30000,
+            snapshot_at: '2026-05-31T12:00:00Z',
+            max_stock_trade_amount_usd: 5000,
+            positions: [{ symbol: 'NVDA', quantity: 10, average_cost: 100, market_price: 120, market_value_usd: 1200, unrealized_pnl_usd: 200 }],
+            sizing_envelope: {
+              symbol: 'NVDA',
+              sizing_status: 'available',
+              account_notional_available_usd: 15000,
+              user_notional_cap_usd: 5000,
+              new_exposure_cap_usd: 5000,
+              existing_symbol_exposure_usd: 1200,
+              remaining_symbol_cap_usd: 3800,
+              advisory_notional_cap_usd: 3800,
+              advisory_max_shares: 30,
+            },
+          },
+          result,
+        },
+        { symbol: 'AAPL', market_data_status: 'ready', job_status: 'idle' as const },
+      ],
+    };
+
+    render(<App backend={mockBackend(state)} />);
+    await screen.findByText('IBKR AI Analysis');
+
+    const signals = screen.getByLabelText('Signals');
+    expect(within(signals).getByText('Pos Qty')).toBeInTheDocument();
+    const row = within(signals).getByRole('row', { name: /NVDA long 126.00/i });
+    expect(row).toHaveTextContent('10.00');
+    expect(row).toHaveTextContent('$1,200.00');
+    expect(row).toHaveTextContent('$3,800.00');
+    expect(row).toHaveTextContent('30');
+    expect(row).toHaveTextContent('available');
+    expect(within(signals).getByRole('row', { name: /AAPL/i })).toHaveTextContent('-');
+  });
+
   it('filters history without hiding current rows, opens a historical row, and exports CSV', async () => {
     const state: AppState = {
       ...emptyState,
@@ -930,6 +1092,7 @@ function mockBackend(state: AppState): BackendAPI {
   return {
     getState: vi.fn(async () => state),
     saveSettings: vi.fn(async () => state),
+    refreshAccountSnapshot: vi.fn(async () => state),
     listChartWindows: vi.fn(async () => []),
     connectIBKR: vi.fn(async (): Promise<AppState> => ({ ...state, connection_status: 'connected' })),
     disconnectIBKR: vi.fn(async (): Promise<AppState> => ({ ...state, connection_status: 'disconnected' })),
@@ -1109,6 +1272,22 @@ function backtestReport(): BacktestReport {
       },
     ],
   };
+}
+
+function forbiddenExecutionCopyPattern(): RegExp {
+  return new RegExp(
+    [
+      '\\b(' + 'bu' + 'y|' + 'se' + 'll)\\b',
+      'sub' + 'mit',
+      'trans' + 'mit',
+      'approve ' + 'order',
+      'place ' + 'order',
+      'cancel ' + 'order',
+      'auto ' + 'manage',
+      'auto' + 'mate',
+    ].join('|'),
+    'i',
+  );
 }
 
 function deferred<T>() {

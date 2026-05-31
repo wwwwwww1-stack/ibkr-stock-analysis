@@ -4,6 +4,17 @@ export type SetupQuality = 'a_plus' | 'a' | 'b' | 'c' | 'none';
 export type JobStatus = 'idle' | 'queued' | 'analyzing' | 'complete' | 'failed' | 'no_data';
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'failed';
 export type BacktestExitReason = 'take_profit' | 'stop_loss' | 'end_of_day' | 'partial_1r' | 'breakeven';
+export type AccountSnapshotStatus = 'unavailable' | 'loading' | 'ready' | 'stale' | 'failed';
+export type SizingStatus =
+  | 'available'
+  | 'blocked_by_cash'
+  | 'blocked_by_cap'
+  | 'existing_position_over_cap'
+  | 'missing_account_snapshot'
+  | 'missing_directional_levels'
+  | 'not_a_plus'
+  | 'no_trade';
+export type AdvisoryAction = 'no_trade' | 'watch' | 'consider_setup' | 'manage_existing' | 'review_risk';
 
 export interface Settings {
   ibkr_host: string;
@@ -12,6 +23,7 @@ export interface Settings {
   watchlist: string[];
   selected_timeframe: Timeframe;
   chart_window?: ChartWindow | null;
+  max_stock_trade_amount_usd?: number | null;
 }
 
 export interface ChartWindow {
@@ -45,6 +57,75 @@ export interface TimeframeContextSummary {
   derived?: DerivedFeatures | null;
 }
 
+export interface AccountSnapshotState {
+  status: AccountSnapshotStatus;
+  snapshot?: AccountSnapshot | null;
+  error?: string;
+  updated_at?: string;
+}
+
+export interface AccountSnapshot {
+  available_cash_usd: number;
+  buying_power_usd: number;
+  snapshot_at: string;
+  positions: AccountPosition[];
+  notes?: string[];
+}
+
+export interface AccountPosition {
+  symbol: string;
+  quantity: number;
+  average_cost: number;
+  market_price: number;
+  market_value_usd: number;
+  unrealized_pnl_usd: number;
+}
+
+export interface SizingEnvelope {
+  symbol: string;
+  sizing_status: SizingStatus;
+  account_notional_available_usd: number;
+  user_notional_cap_usd: number;
+  new_exposure_cap_usd: number;
+  existing_symbol_exposure_usd: number;
+  remaining_symbol_cap_usd: number;
+  advisory_notional_cap_usd: number;
+  reference_entry_price?: number | null;
+  advisory_max_shares?: number | null;
+  risk_per_share?: number | null;
+  estimated_risk_usd?: number | null;
+}
+
+export interface AccountSnapshotContext {
+  available_cash_usd: number;
+  buying_power_usd: number;
+  snapshot_at: string;
+  positions: AccountPositionContext[];
+  max_stock_trade_amount_usd: number;
+  sizing_envelope?: SizingEnvelope | null;
+}
+
+export interface AccountPositionContext {
+  symbol: string;
+  quantity: number;
+  average_cost: number;
+  market_price: number;
+  market_value_usd: number;
+  unrealized_pnl_usd: number;
+}
+
+export interface PositionManagementOutput {
+  account_aware: boolean;
+  sizing_status: SizingStatus;
+  advisory_action: AdvisoryAction;
+  advisory_max_shares?: number | null;
+  advisory_notional_cap_usd?: number | null;
+  estimated_risk_usd?: number | null;
+  existing_exposure_usd?: number | null;
+  management_notes: string[];
+  manual_review_required: boolean;
+}
+
 export interface AgentOutput {
   direction: Direction;
   setup_quality: SetupQuality;
@@ -62,6 +143,7 @@ export interface AgentOutput {
   price_action: string[];
   invalidated_if: string;
   generated_at: string;
+  position_management?: PositionManagementOutput | null;
 }
 
 export interface AnalysisResult {
@@ -241,6 +323,7 @@ export interface SymbolState {
   job_status: JobStatus;
   current_price?: number;
   result?: AnalysisResult;
+  account_context?: AccountSnapshotContext | null;
   error?: string;
 }
 
@@ -249,5 +332,6 @@ export interface AppState {
   connection_status: ConnectionStatus;
   scheduled_analysis_enabled: boolean;
   symbols: SymbolState[];
+  account_snapshot: AccountSnapshotState;
   last_error?: string;
 }

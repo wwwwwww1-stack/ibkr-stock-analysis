@@ -1,8 +1,8 @@
 # IBKR Stock Analysis
 
-Wails-based macOS desktop app for read-only IBKR market data analysis with a local Codex CLI analysis runtime.
+Wails-based macOS desktop app for read-only IBKR market and account-aware analysis with a local Codex CLI analysis runtime.
 
-Version 1 is analysis assistance only. It does not place orders, cancel orders, size positions, allocate accounts, or expose automated trading controls.
+The app is analysis assistance only. It does not place orders, cancel orders, stage orders, approve orders, mutate accounts, or expose automated trading controls.
 
 ## Requirements
 
@@ -50,6 +50,14 @@ PRICEACTION_KB_PATH=/path/to/priceaction make dev
 ```
 
 The Go backend selects and injects PriceAction excerpts into the Codex prompt. Codex analysis is instructed not to browse the repository or read `priceaction` files itself.
+
+## Account-Aware Analysis
+
+Settings can refresh a read-only IBKR account snapshot containing cash, buying power, and current USD stock positions. The snapshot is kept in memory and is not persisted.
+
+The maximum stock trade amount is a user preference and hard advisory cap for scanner sizing. It is not an order amount. Watchlist analysis can include advisory max shares, advisory notional cap, sizing status, and manual-review position-management notes when both a fresh account snapshot and maximum stock trade amount are available.
+
+Backtest remains independent of live account data and continues to use its fixed historical `100` share simulation assumption.
 
 ## Manual Acceptance
 

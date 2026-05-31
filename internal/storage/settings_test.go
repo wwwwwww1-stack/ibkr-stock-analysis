@@ -63,6 +63,24 @@ func TestStoreSavesAndLoadsSettingsFromSQLite(t *testing.T) {
 	}
 }
 
+func TestStoreSavesAndLoadsMaxStockTradeAmount(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "app.db"), 20)
+	amount := 10000.0
+	settings := domain.DefaultSettings()
+	settings.MaxStockTradeAmountUSD = &amount
+
+	if err := store.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings returned error: %v", err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if loaded.Settings.MaxStockTradeAmountUSD == nil || *loaded.Settings.MaxStockTradeAmountUSD != 10000 {
+		t.Fatalf("max stock trade amount = %#v, want 10000", loaded.Settings.MaxStockTradeAmountUSD)
+	}
+}
+
 func TestStoreAppendsQueriesAndLoadsLatestAnalysisHistory(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "app.db"), 20)
 	first := analysisResult("NVDA", domain.Timeframe5m, domain.DirectionLong, time.Date(2026, 5, 30, 18, 0, 0, 0, time.UTC))

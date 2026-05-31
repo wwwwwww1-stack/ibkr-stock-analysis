@@ -175,12 +175,12 @@ func BuildCodexPrompt(input domain.AgentInput, generatedAt time.Time, snippets [
 	instructions := []string{
 		"You are analyzing supplied market data, not editing code.",
 		"This is not financial advice; do not claim that it is financial advice or a recommendation.",
-		"Do not claim to access accounts, portfolio data, positions, balances, or live brokerage state.",
-		"Never request, store, or mention needing IBKR credentials.",
+		"Never request, store, or mention needing IBKR login secrets.",
 		"Do not run tools, do not inspect accounts, do not place or prepare orders.",
+		"Do not run tools, inspect orders, browse files, place orders, cancel orders, prepare orders, output order payloads, mention order IDs, or claim execution.",
 		"Use only supplied market data and supplied PriceAction knowledge excerpts.",
 		"Do not browse the repository or read priceaction files yourself.",
-		"Write all natural-language output fields in Simplified Chinese: summary, price_action, invalidated_if, market_regime, trade_thesis, counterargument, no_trade_reason, and rejection_reasons.",
+		"Write all natural-language output fields in Simplified Chinese: summary, price_action, invalidated_if, market_regime, trade_thesis, counterargument, no_trade_reason, rejection_reasons, and position_management.management_notes.",
 		"Use the top-level timeframe and bars as the primary analysis timeframe.",
 		"Use multi_timeframe_context for 15m and 1h resonance, conflicts, and support/resistance context.",
 		"Do not invent unavailable higher-timeframe data.",
@@ -191,6 +191,22 @@ func BuildCodexPrompt(input domain.AgentInput, generatedAt time.Time, snippets [
 		"State the strongest counterargument against the trade in counterargument.",
 		"Only output setup_quality \"a_plus\" when the counterargument is visibly negated by supplied price action.",
 		"When uncertainty, range-middle location, weak signal bars, mixed wicks, multi-timeframe conflict, overly wide stop, or insufficient target space exists, output direction neutral and setup_quality none.",
+	}
+	if input.AccountContext == nil {
+		instructions = append(instructions,
+			"Do not claim to access accounts, portfolio data, positions, balances, or live brokerage state.",
+			"Set position_management to null because no sanitized account context was supplied.",
+		)
+	} else {
+		instructions = append(instructions,
+			"Use only the supplied sanitized account snapshot, configured maximum stock trade amount, and sizing envelope.",
+			"Do not infer, request, or claim access to any account data beyond the supplied account_context.",
+			"Treat all position-management output as advisory and manually reviewed.",
+			"Require manual_review_required to be true whenever position_management is not null.",
+			"When the market setup is not A+, set position_management.sizing_status to no_trade or not_a_plus and do not suggest new exposure even if account capacity exists.",
+			"When the market setup is A+ but advisory_max_shares is zero or advisory_notional_cap_usd is zero, explain the account-blocked condition for manual review.",
+			"Use manual-review wording for possible add, trim, hold, or risk-review ideas; never phrase them as app-executed actions.",
+		)
 	}
 	if input.ChartImage != nil && input.ChartImage.Provided {
 		instructions = append(instructions,
@@ -232,7 +248,7 @@ const agentOutputJSONSchema = `{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["direction", "setup_quality", "entry_zone", "stop_loss", "take_profit", "risk_reward", "confidence", "market_regime", "trade_thesis", "counterargument", "no_trade_reason", "rejection_reasons", "summary", "price_action", "invalidated_if", "generated_at"],
+  "required": ["direction", "setup_quality", "entry_zone", "stop_loss", "take_profit", "risk_reward", "confidence", "market_regime", "trade_thesis", "counterargument", "no_trade_reason", "rejection_reasons", "summary", "price_action", "invalidated_if", "generated_at", "position_management"],
   "properties": {
     "direction": {
       "type": "string",
@@ -304,6 +320,47 @@ const agentOutputJSONSchema = `{
     "generated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "position_management": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["account_aware", "sizing_status", "advisory_action", "advisory_max_shares", "advisory_notional_cap_usd", "estimated_risk_usd", "existing_exposure_usd", "management_notes", "manual_review_required"],
+          "properties": {
+            "account_aware": {"type": "boolean"},
+            "sizing_status": {
+              "type": "string",
+              "enum": ["available", "blocked_by_cash", "blocked_by_cap", "existing_position_over_cap", "missing_account_snapshot", "missing_directional_levels", "not_a_plus", "no_trade"]
+            },
+            "advisory_action": {
+              "type": "string",
+              "enum": ["no_trade", "watch", "consider_setup", "manage_existing", "review_risk"]
+            },
+            "advisory_max_shares": {
+              "anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]
+            },
+            "advisory_notional_cap_usd": {
+              "anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]
+            },
+            "estimated_risk_usd": {
+              "anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]
+            },
+            "existing_exposure_usd": {
+              "anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]
+            },
+            "management_notes": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "manual_review_required": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        },
+        {"type": "null"}
+      ]
     }
   }
 }`

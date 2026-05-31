@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ibkr-stock-analysis/internal/account"
 	"ibkr-stock-analysis/internal/agent"
 	appsvc "ibkr-stock-analysis/internal/app"
 	"ibkr-stock-analysis/internal/capture"
@@ -23,10 +24,7 @@ type App struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	store := defaultStore()
-	provider := market.NewIBKRProvider()
-	agentClient := agent.NewCodexClient()
-	service := appsvc.NewService(store, provider, agentClient, nil)
+	service := newRuntimeService(nil)
 	service.SetChartCapturer(capture.NewInteractiveCapturer())
 	service.SetScheduledAnalysisEnabled(true)
 	return &App{service: service}
@@ -36,7 +34,7 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.service = appsvc.NewService(a.serviceStore(), market.NewIBKRProvider(), agent.NewCodexClient(), func(ctx context.Context, name string, payload any) {
+	a.service = newRuntimeService(func(ctx context.Context, name string, payload any) {
 		runtime.EventsEmit(ctx, name, payload)
 	})
 	a.service.SetChartCapturer(capture.NewInteractiveCapturer())
@@ -55,6 +53,10 @@ func (a *App) GetState() (domain.AppState, error) {
 
 func (a *App) SaveSettings(settings domain.Settings) (domain.AppState, error) {
 	return a.service.SaveSettings(a.ctx, settings)
+}
+
+func (a *App) RefreshAccountSnapshot() (domain.AppState, error) {
+	return a.service.RefreshAccountSnapshot(a.ctx)
 }
 
 func (a *App) ConnectIBKR() (domain.AppState, error) {
@@ -117,6 +119,17 @@ func (a *App) ListChartWindows() ([]domain.ChartWindow, error) {
 
 func (a *App) serviceStore() *storage.Store {
 	return defaultStore()
+}
+
+func newRuntimeService(emit appsvc.EventEmitter) *appsvc.Service {
+	store := defaultStore()
+	provider := market.NewIBKRProvider()
+	accountProvider := account.NewIBKRProvider(account.IBKRProviderConfig{
+		Client:        provider.AccountSnapshotClient(),
+		Events:        provider.AccountSnapshotEvents(),
+		NextRequestID: provider.NextAccountRequestID,
+	})
+	return appsvc.NewService(store, provider, agent.NewCodexClient(), emit, accountProvider)
 }
 
 func defaultStore() *storage.Store {

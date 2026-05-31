@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -208,5 +209,45 @@ func TestAgentInputMarshalOmitsChartImagePath(t *testing.T) {
 	}
 	if strings.Contains(encoded, "/tmp/private-chart.png") || strings.Contains(encoded, `"path"`) {
 		t.Fatalf("encoded input = %s, chart image path must not be serialized", encoded)
+	}
+}
+
+func TestSettingsValidateAllowsNilMaxStockTradeAmount(t *testing.T) {
+	settings := DefaultSettings()
+
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestSettingsValidateAllowsPositiveFiniteMaxStockTradeAmount(t *testing.T) {
+	amount := 10000.50
+	settings := DefaultSettings()
+	settings.MaxStockTradeAmountUSD = &amount
+
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestSettingsValidateRejectsInvalidMaxStockTradeAmount(t *testing.T) {
+	tests := map[string]float64{
+		"zero":         0,
+		"negative":     -1,
+		"positive_inf": math.Inf(1),
+		"negative_inf": math.Inf(-1),
+		"not_a_number": math.NaN(),
+	}
+
+	for name, amount := range tests {
+		t.Run(name, func(t *testing.T) {
+			settings := DefaultSettings()
+			settings.MaxStockTradeAmountUSD = &amount
+
+			err := settings.Validate()
+			if err == nil || !strings.Contains(err.Error(), "max_stock_trade_amount_usd") {
+				t.Fatalf("err = %v, want max_stock_trade_amount_usd validation error", err)
+			}
+		})
 	}
 }

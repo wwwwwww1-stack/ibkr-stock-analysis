@@ -226,12 +226,17 @@ function App({ backend = wailsBackend }: Props) {
   }
 
   async function saveSettings() {
-    const next = await backend.saveSettings({
-      ...state.settings,
-      watchlist: symbolsFromWatchlist(watchlistText),
-    });
-    setState(next);
-    setSelectedSymbol((current) => next.symbols.find((row) => row.symbol === current)?.symbol ?? next.symbols[0]?.symbol);
+    setError(undefined);
+    try {
+      const next = await backend.saveSettings({
+        ...state.settings,
+        watchlist: symbolsFromWatchlist(watchlistText),
+      });
+      setState(next);
+      setSelectedSymbol((current) => next.symbols.find((row) => row.symbol === current)?.symbol ?? next.symbols[0]?.symbol);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function run(action: () => Promise<AppState>) {
@@ -253,6 +258,32 @@ function App({ backend = wailsBackend }: Props) {
 
   function setScheduledAnalysisEnabled(enabled: boolean) {
     void run(() => backend.setScheduledAnalysisEnabled(enabled));
+  }
+
+  async function refreshAccountSnapshot() {
+    setError(undefined);
+    setState((current) => ({
+      ...current,
+      account_snapshot: {
+        ...current.account_snapshot,
+        status: 'loading',
+        error: undefined,
+      },
+    }));
+    try {
+      const next = await backend.refreshAccountSnapshot();
+      setState(next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      setState((current) => ({
+        ...current,
+        account_snapshot: {
+          status: 'failed',
+          error: message,
+        },
+      }));
+    }
   }
 
   function openHistory() {
@@ -435,6 +466,7 @@ function App({ backend = wailsBackend }: Props) {
             onSaveSettings={saveSettings}
             onConnect={() => run(backend.connectIBKR)}
             onDisconnect={() => run(backend.disconnectIBKR)}
+            onRefreshAccountSnapshot={() => void refreshAccountSnapshot()}
             onRefreshChartWindows={refreshChartWindows}
             onSelectChartWindow={selectChartWindow}
           />

@@ -1,5 +1,228 @@
 export namespace domain {
 
+	export class AccountPosition {
+	    symbol: string;
+	    quantity: number;
+	    average_cost: number;
+	    market_price: number;
+	    market_value_usd: number;
+	    unrealized_pnl_usd: number;
+
+	    static createFrom(source: any = {}) {
+	        return new AccountPosition(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.symbol = source["symbol"];
+	        this.quantity = source["quantity"];
+	        this.average_cost = source["average_cost"];
+	        this.market_price = source["market_price"];
+	        this.market_value_usd = source["market_value_usd"];
+	        this.unrealized_pnl_usd = source["unrealized_pnl_usd"];
+	    }
+	}
+	export class AccountPositionContext {
+	    symbol: string;
+	    quantity: number;
+	    average_cost: number;
+	    market_price: number;
+	    market_value_usd: number;
+	    unrealized_pnl_usd: number;
+
+	    static createFrom(source: any = {}) {
+	        return new AccountPositionContext(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.symbol = source["symbol"];
+	        this.quantity = source["quantity"];
+	        this.average_cost = source["average_cost"];
+	        this.market_price = source["market_price"];
+	        this.market_value_usd = source["market_value_usd"];
+	        this.unrealized_pnl_usd = source["unrealized_pnl_usd"];
+	    }
+	}
+	export class AccountSnapshot {
+	    available_cash_usd: number;
+	    buying_power_usd: number;
+	    // Go type: time
+	    snapshot_at: any;
+	    positions: AccountPosition[];
+	    notes?: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new AccountSnapshot(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available_cash_usd = source["available_cash_usd"];
+	        this.buying_power_usd = source["buying_power_usd"];
+	        this.snapshot_at = this.convertValues(source["snapshot_at"], null);
+	        this.positions = this.convertValues(source["positions"], AccountPosition);
+	        this.notes = source["notes"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SizingEnvelope {
+	    symbol: string;
+	    sizing_status: string;
+	    account_notional_available_usd: number;
+	    user_notional_cap_usd: number;
+	    new_exposure_cap_usd: number;
+	    existing_symbol_exposure_usd: number;
+	    remaining_symbol_cap_usd: number;
+	    advisory_notional_cap_usd: number;
+	    reference_entry_price?: number;
+	    advisory_max_shares?: number;
+	    risk_per_share?: number;
+	    estimated_risk_usd?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new SizingEnvelope(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.symbol = source["symbol"];
+	        this.sizing_status = source["sizing_status"];
+	        this.account_notional_available_usd = source["account_notional_available_usd"];
+	        this.user_notional_cap_usd = source["user_notional_cap_usd"];
+	        this.new_exposure_cap_usd = source["new_exposure_cap_usd"];
+	        this.existing_symbol_exposure_usd = source["existing_symbol_exposure_usd"];
+	        this.remaining_symbol_cap_usd = source["remaining_symbol_cap_usd"];
+	        this.advisory_notional_cap_usd = source["advisory_notional_cap_usd"];
+	        this.reference_entry_price = source["reference_entry_price"];
+	        this.advisory_max_shares = source["advisory_max_shares"];
+	        this.risk_per_share = source["risk_per_share"];
+	        this.estimated_risk_usd = source["estimated_risk_usd"];
+	    }
+	}
+	export class AccountSnapshotContext {
+	    available_cash_usd: number;
+	    buying_power_usd: number;
+	    // Go type: time
+	    snapshot_at: any;
+	    positions: AccountPositionContext[];
+	    max_stock_trade_amount_usd: number;
+	    sizing_envelope?: SizingEnvelope;
+
+	    static createFrom(source: any = {}) {
+	        return new AccountSnapshotContext(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available_cash_usd = source["available_cash_usd"];
+	        this.buying_power_usd = source["buying_power_usd"];
+	        this.snapshot_at = this.convertValues(source["snapshot_at"], null);
+	        this.positions = this.convertValues(source["positions"], AccountPositionContext);
+	        this.max_stock_trade_amount_usd = source["max_stock_trade_amount_usd"];
+	        this.sizing_envelope = this.convertValues(source["sizing_envelope"], SizingEnvelope);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class AccountSnapshotState {
+	    status: string;
+	    snapshot?: AccountSnapshot;
+	    error?: string;
+	    // Go type: time
+	    updated_at?: any;
+
+	    static createFrom(source: any = {}) {
+	        return new AccountSnapshotState(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.snapshot = this.convertValues(source["snapshot"], AccountSnapshot);
+	        this.error = source["error"];
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PositionManagementOutput {
+	    account_aware: boolean;
+	    sizing_status: string;
+	    advisory_action: string;
+	    advisory_max_shares?: number;
+	    advisory_notional_cap_usd?: number;
+	    estimated_risk_usd?: number;
+	    existing_exposure_usd?: number;
+	    management_notes: string[];
+	    manual_review_required: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new PositionManagementOutput(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.account_aware = source["account_aware"];
+	        this.sizing_status = source["sizing_status"];
+	        this.advisory_action = source["advisory_action"];
+	        this.advisory_max_shares = source["advisory_max_shares"];
+	        this.advisory_notional_cap_usd = source["advisory_notional_cap_usd"];
+	        this.estimated_risk_usd = source["estimated_risk_usd"];
+	        this.existing_exposure_usd = source["existing_exposure_usd"];
+	        this.management_notes = source["management_notes"];
+	        this.manual_review_required = source["manual_review_required"];
+	    }
+	}
 	export class EntryZone {
 	    low: number;
 	    high: number;
@@ -32,6 +255,7 @@ export namespace domain {
 	    invalidated_if: string;
 	    // Go type: time
 	    generated_at: any;
+	    position_management?: PositionManagementOutput;
 
 	    static createFrom(source: any = {}) {
 	        return new AgentOutput(source);
@@ -55,6 +279,7 @@ export namespace domain {
 	        this.price_action = source["price_action"];
 	        this.invalidated_if = source["invalidated_if"];
 	        this.generated_at = this.convertValues(source["generated_at"], null);
+	        this.position_management = this.convertValues(source["position_management"], PositionManagementOutput);
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -287,6 +512,7 @@ export namespace domain {
 	    job_status: string;
 	    current_price?: number;
 	    result?: AnalysisResult;
+	    account_context?: AccountSnapshotContext;
 	    error?: string;
 
 	    static createFrom(source: any = {}) {
@@ -302,6 +528,7 @@ export namespace domain {
 	        this.job_status = source["job_status"];
 	        this.current_price = source["current_price"];
 	        this.result = this.convertValues(source["result"], AnalysisResult);
+	        this.account_context = this.convertValues(source["account_context"], AccountSnapshotContext);
 	        this.error = source["error"];
 	    }
 
@@ -346,6 +573,7 @@ export namespace domain {
 	    watchlist: string[];
 	    selected_timeframe: string;
 	    chart_window?: ChartWindow;
+	    max_stock_trade_amount_usd?: number;
 
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -359,6 +587,7 @@ export namespace domain {
 	        this.watchlist = source["watchlist"];
 	        this.selected_timeframe = source["selected_timeframe"];
 	        this.chart_window = this.convertValues(source["chart_window"], ChartWindow);
+	        this.max_stock_trade_amount_usd = source["max_stock_trade_amount_usd"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -384,6 +613,7 @@ export namespace domain {
 	    connection_status: string;
 	    scheduled_analysis_enabled: boolean;
 	    symbols: SymbolState[];
+	    account_snapshot: AccountSnapshotState;
 	    last_error?: string;
 
 	    static createFrom(source: any = {}) {
@@ -396,6 +626,7 @@ export namespace domain {
 	        this.connection_status = source["connection_status"];
 	        this.scheduled_analysis_enabled = source["scheduled_analysis_enabled"];
 	        this.symbols = this.convertValues(source["symbols"], SymbolState);
+	        this.account_snapshot = this.convertValues(source["account_snapshot"], AccountSnapshotState);
 	        this.last_error = source["last_error"];
 	    }
 
@@ -798,6 +1029,8 @@ export namespace domain {
 	        this.commission_per_order = source["commission_per_order"];
 	    }
 	}
+
+
 
 
 

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"ibkr-stock-analysis/internal/account"
 	"ibkr-stock-analysis/internal/agent"
 	"ibkr-stock-analysis/internal/analysis"
 	"ibkr-stock-analysis/internal/backtest"
@@ -22,37 +23,48 @@ import (
 type EventEmitter func(ctx context.Context, name string, payload any)
 
 type Service struct {
-	mu          sync.Mutex
-	store       *storage.Store
-	provider    market.MarketDataProvider
-	agentClient agent.Client
-	capturer    capture.ChartCapturer
-	scheduler   *scheduler.Scheduler
-	emit        EventEmitter
-	state       domain.AppState
-	history     map[string]domain.AnalysisResult
-	autoCancel  context.CancelFunc
-	autoWG      sync.WaitGroup
-	autoEnabled bool
-	autoLead    time.Duration
+	mu                sync.Mutex
+	store             *storage.Store
+	provider          market.MarketDataProvider
+	accountProvider   account.SnapshotProvider
+	agentClient       agent.Client
+	capturer          capture.ChartCapturer
+	scheduler         *scheduler.Scheduler
+	emit              EventEmitter
+	state             domain.AppState
+	history           map[string]domain.AnalysisResult
+	autoCancel        context.CancelFunc
+	autoWG            sync.WaitGroup
+	autoEnabled       bool
+	autoLead          time.Duration
+	accountStaleAfter time.Duration
+	now               func() time.Time
 }
 
-func NewService(store *storage.Store, provider market.MarketDataProvider, agentClient agent.Client, emit EventEmitter) *Service {
+func NewService(store *storage.Store, provider market.MarketDataProvider, agentClient agent.Client, emit EventEmitter, accountProviders ...account.SnapshotProvider) *Service {
 	snapshot, _ := store.Load()
 	settings := snapshot.Settings.Normalize()
+	accountProvider := account.SnapshotProvider(account.UnavailableProvider{})
+	if len(accountProviders) > 0 && accountProviders[0] != nil {
+		accountProvider = accountProviders[0]
+	}
 	service := &Service{
-		store:       store,
-		provider:    provider,
-		agentClient: agentClient,
-		scheduler:   scheduler.New(),
-		emit:        emit,
+		store:           store,
+		provider:        provider,
+		accountProvider: accountProvider,
+		agentClient:     agentClient,
+		scheduler:       scheduler.New(),
+		emit:            emit,
 		state: domain.AppState{
 			Settings:         settings,
 			ConnectionStatus: provider.State().Status,
 			Symbols:          symbolStates(settings.Watchlist),
+			AccountSnapshot:  domain.AccountSnapshotState{Status: domain.AccountSnapshotUnavailable},
 		},
-		history:  make(map[string]domain.AnalysisResult),
-		autoLead: 10 * time.Second,
+		history:           make(map[string]domain.AnalysisResult),
+		autoLead:          10 * time.Second,
+		accountStaleAfter: 5 * time.Minute,
+		now:               func() time.Time { return time.Now().UTC() },
 	}
 	for _, result := range snapshot.History {
 		service.history[result.Symbol] = result
@@ -127,12 +139,17 @@ func (s *Service) ListChartWindows(ctx context.Context) ([]domain.ChartWindow, e
 func (s *Service) GetState(ctx context.Context) (domain.AppState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.markAccountSnapshotStaleLocked()
 	return s.state, nil
 }
 
 func (s *Service) SaveSettings(ctx context.Context, settings domain.Settings) (domain.AppState, error) {
+	settings = settings.Normalize()
+	if err := settings.Validate(); err != nil {
+		return domain.AppState{}, fmt.Errorf("settings: %w", err)
+	}
 	s.mu.Lock()
-	s.state.Settings = settings.Normalize()
+	s.state.Settings = settings
 	s.state.Symbols = symbolStates(s.state.Settings.Watchlist)
 	s.applyHistory()
 	if err := s.persistLocked(); err != nil {
@@ -147,6 +164,40 @@ func (s *Service) SaveSettings(ctx context.Context, settings domain.Settings) (d
 		s.startScheduledAnalysis(ctx)
 	}
 	return state, nil
+}
+
+func (s *Service) RefreshAccountSnapshot(ctx context.Context) (domain.AppState, error) {
+	s.mu.Lock()
+	s.state.AccountSnapshot = domain.AccountSnapshotState{
+		Status:    domain.AccountSnapshotLoading,
+		UpdatedAt: ptrTime(s.now().UTC()),
+	}
+	s.emitLocked(ctx, "account:update", s.state)
+	s.mu.Unlock()
+
+	snapshot, err := s.accountProvider.Snapshot(ctx)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	updatedAt := s.now().UTC()
+	if err != nil {
+		s.state.AccountSnapshot = domain.AccountSnapshotState{
+			Status:    domain.AccountSnapshotFailed,
+			Error:     err.Error(),
+			UpdatedAt: &updatedAt,
+		}
+		s.emitLocked(ctx, "account:update", s.state)
+		return s.state, err
+	}
+	snapshot.Positions = append([]domain.AccountPosition(nil), snapshot.Positions...)
+	snapshot.Notes = append([]string(nil), snapshot.Notes...)
+	s.state.AccountSnapshot = domain.AccountSnapshotState{
+		Status:    domain.AccountSnapshotReady,
+		Snapshot:  &snapshot,
+		UpdatedAt: &updatedAt,
+	}
+	s.emitLocked(ctx, "account:update", s.state)
+	return s.state, nil
 }
 
 func (s *Service) ConnectIBKR(ctx context.Context) (domain.AppState, error) {
@@ -238,6 +289,7 @@ func (s *Service) DisconnectIBKR(ctx context.Context) (domain.AppState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.ConnectionStatus = s.provider.State().Status
+	s.markAccountSnapshotStaleLocked()
 	if err != nil {
 		s.state.LastError = err.Error()
 		return s.state, err
@@ -271,6 +323,7 @@ func (s *Service) RunAnalysisNow(ctx context.Context, symbol string) (domain.App
 		return s.setSymbolErrorAndState(ctx, symbol, domain.JobStatusNoData, err.Error())
 	}
 	s.setSymbolPrice(ctx, symbol, input.Bars[len(input.Bars)-1])
+	s.setSymbolAccountContext(ctx, symbol, input.AccountContext)
 	previous := s.historySnapshot()
 
 	queue := analysis.NewQueue(s.agentClient, 1)
@@ -334,6 +387,7 @@ func (s *Service) RunScreenshotAnalysis(ctx context.Context, symbol string) (dom
 		return s.setSymbolErrorAndState(ctx, symbol, domain.JobStatusNoData, err.Error())
 	}
 	s.setSymbolPrice(ctx, symbol, input.Bars[len(input.Bars)-1])
+	s.setSymbolAccountContext(ctx, symbol, input.AccountContext)
 	previous := s.historySnapshot()
 
 	queue := analysis.NewQueue(s.agentClient, 1)
@@ -370,10 +424,82 @@ func (s *Service) buildAgentInput(ctx context.Context, symbol string, settings d
 		MultiTimeframeContext: s.buildMultiTimeframeContext(ctx, symbol, settings.SelectedTimeframe, bars),
 		ChartImage:            chartImage,
 	}
+	input.AccountContext = s.buildAccountContext(symbol, settings, input.CurrentPrice)
 	if err := ctx.Err(); err != nil {
 		return domain.AgentInput{}, err
 	}
 	return input, nil
+}
+
+func (s *Service) buildAccountContext(symbol string, settings domain.Settings, currentPrice float64) *domain.AccountSnapshotContext {
+	if settings.MaxStockTradeAmountUSD == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.markAccountSnapshotStaleLocked()
+	if s.state.AccountSnapshot.Status != domain.AccountSnapshotReady || s.state.AccountSnapshot.Snapshot == nil {
+		return nil
+	}
+	snapshot := s.state.AccountSnapshot.Snapshot
+	positions := accountContextPositions(snapshot.Positions, settings.Watchlist, symbol)
+	envelope := account.BuildSizingEnvelope(account.SizingInput{
+		Symbol:                 symbol,
+		Snapshot:               snapshot,
+		MaxStockTradeAmountUSD: settings.MaxStockTradeAmountUSD,
+		CurrentPrice:           currentPrice,
+		SetupQuality:           domain.SetupQualityAPlus,
+	})
+	return &domain.AccountSnapshotContext{
+		AvailableCashUSD:       snapshot.AvailableCashUSD,
+		BuyingPowerUSD:         snapshot.BuyingPowerUSD,
+		SnapshotAt:             snapshot.SnapshotAt,
+		Positions:              positions,
+		MaxStockTradeAmountUSD: *settings.MaxStockTradeAmountUSD,
+		SizingEnvelope:         &envelope,
+	}
+}
+
+func accountContextPositions(positions []domain.AccountPosition, watchlist []string, selectedSymbol string) []domain.AccountPositionContext {
+	allowed := make(map[string]struct{}, len(watchlist)+1)
+	for _, symbol := range watchlist {
+		allowed[strings.ToUpper(strings.TrimSpace(symbol))] = struct{}{}
+	}
+	allowed[strings.ToUpper(strings.TrimSpace(selectedSymbol))] = struct{}{}
+
+	out := make([]domain.AccountPositionContext, 0, len(positions))
+	for _, position := range positions {
+		symbol := strings.ToUpper(strings.TrimSpace(position.Symbol))
+		if _, ok := allowed[symbol]; !ok {
+			continue
+		}
+		out = append(out, domain.AccountPositionContext{
+			Symbol:           symbol,
+			Quantity:         position.Quantity,
+			AverageCost:      position.AverageCost,
+			MarketPrice:      position.MarketPrice,
+			MarketValueUSD:   position.MarketValueUSD,
+			UnrealizedPnLUSD: position.UnrealizedPnLUSD,
+		})
+	}
+	return out
+}
+
+func (s *Service) markAccountSnapshotStaleLocked() {
+	if s.state.AccountSnapshot.Status != domain.AccountSnapshotReady {
+		return
+	}
+	if s.state.ConnectionStatus != domain.ConnectionConnected && s.state.ConnectionStatus != domain.ConnectionConnecting {
+		s.state.AccountSnapshot.Status = domain.AccountSnapshotStale
+		return
+	}
+	if s.state.AccountSnapshot.Snapshot == nil || s.state.AccountSnapshot.Snapshot.SnapshotAt.IsZero() {
+		s.state.AccountSnapshot.Status = domain.AccountSnapshotStale
+		return
+	}
+	if s.now().UTC().Sub(s.state.AccountSnapshot.Snapshot.SnapshotAt.UTC()) > s.accountStaleAfter {
+		s.state.AccountSnapshot.Status = domain.AccountSnapshotStale
+	}
 }
 
 func (s *Service) buildMultiTimeframeContext(ctx context.Context, symbol string, primaryTimeframe domain.Timeframe, primaryBars []domain.Bar) []domain.TimeframeContext {
@@ -640,6 +766,46 @@ func (s *Service) setSymbolPrice(ctx context.Context, symbol string, bar domain.
 	s.emitLocked(ctx, "market:update", s.state)
 }
 
+func (s *Service) setSymbolAccountContext(ctx context.Context, symbol string, accountContext *domain.AccountSnapshotContext) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.state.Symbols {
+		if s.state.Symbols[i].Symbol == symbol {
+			s.state.Symbols[i].AccountContext = cloneAccountContext(accountContext)
+		}
+	}
+	s.emitLocked(ctx, "account:update", s.state)
+}
+
+func cloneAccountContext(context *domain.AccountSnapshotContext) *domain.AccountSnapshotContext {
+	if context == nil {
+		return nil
+	}
+	copied := *context
+	copied.Positions = append([]domain.AccountPositionContext(nil), context.Positions...)
+	if context.SizingEnvelope != nil {
+		envelope := *context.SizingEnvelope
+		if context.SizingEnvelope.ReferenceEntryPrice != nil {
+			value := *context.SizingEnvelope.ReferenceEntryPrice
+			envelope.ReferenceEntryPrice = &value
+		}
+		if context.SizingEnvelope.AdvisoryMaxShares != nil {
+			value := *context.SizingEnvelope.AdvisoryMaxShares
+			envelope.AdvisoryMaxShares = &value
+		}
+		if context.SizingEnvelope.RiskPerShare != nil {
+			value := *context.SizingEnvelope.RiskPerShare
+			envelope.RiskPerShare = &value
+		}
+		if context.SizingEnvelope.EstimatedRiskUSD != nil {
+			value := *context.SizingEnvelope.EstimatedRiskUSD
+			envelope.EstimatedRiskUSD = &value
+		}
+		copied.SizingEnvelope = &envelope
+	}
+	return &copied
+}
+
 func (s *Service) markSymbol(symbol string, status domain.JobStatus, message string) {
 	for i := range s.state.Symbols {
 		if s.state.Symbols[i].Symbol == symbol {
@@ -728,6 +894,10 @@ func containsSymbol(symbols []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func ptrTime(value time.Time) *time.Time {
+	return &value
 }
 
 func regularSessionWindow(date string) (time.Time, time.Time, error) {

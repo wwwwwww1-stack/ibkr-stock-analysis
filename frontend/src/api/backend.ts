@@ -12,6 +12,7 @@ import type {
 export interface BackendAPI {
   getState(): Promise<AppState>;
   saveSettings(settings: Settings): Promise<AppState>;
+  refreshAccountSnapshot(): Promise<AppState>;
   connectIBKR(): Promise<AppState>;
   disconnectIBKR(): Promise<AppState>;
   setScheduledAnalysisEnabled(enabled: boolean): Promise<AppState>;
@@ -30,6 +31,7 @@ declare global {
         App?: {
           GetState(): Promise<AppState>;
           SaveSettings(settings: Settings): Promise<AppState>;
+          RefreshAccountSnapshot(): Promise<AppState>;
           ConnectIBKR(): Promise<AppState>;
           DisconnectIBKR(): Promise<AppState>;
           SetScheduledAnalysisEnabled(enabled: boolean): Promise<AppState>;
@@ -51,6 +53,7 @@ declare global {
 export const wailsBackend: BackendAPI = {
   getState: () => app().GetState(),
   saveSettings: (settings) => app().SaveSettings(settings),
+  refreshAccountSnapshot: () => app().RefreshAccountSnapshot(),
   connectIBKR: () => app().ConnectIBKR(),
   disconnectIBKR: () => app().DisconnectIBKR(),
   setScheduledAnalysisEnabled: (enabled) => app().SetScheduledAnalysisEnabled(enabled),
@@ -65,7 +68,7 @@ export const wailsBackend: BackendAPI = {
 export function subscribeStateEvents(callback: (state: AppState) => void): () => void {
   const runtime = window.runtime;
   if (!runtime?.EventsOn) return () => undefined;
-  const offCallbacks = ['connection:update', 'market:update', 'analysis:update', 'analysis:error', 'settings:update'].map((event) =>
+  const offCallbacks = ['connection:update', 'market:update', 'analysis:update', 'analysis:error', 'settings:update', 'account:update'].map((event) =>
     runtime.EventsOn!<AppState>(event, callback),
   );
   return () => offCallbacks.forEach((off) => off?.());

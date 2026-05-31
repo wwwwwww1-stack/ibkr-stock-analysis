@@ -98,6 +98,11 @@ export function SignalList({
               <th>Symbol</th>
               <th>Direction</th>
               <th>Price</th>
+              <th>Pos Qty</th>
+              <th>Pos Value</th>
+              <th>Advisory Cap</th>
+              <th>Max Sh.</th>
+              <th>Sizing</th>
               <th>Timeframe</th>
               <th>Entry</th>
               <th>Stop</th>
@@ -145,6 +150,11 @@ function CurrentSignalRow({ symbol, selected, onSelect }: { symbol: SymbolState;
       <td>{symbol.symbol}</td>
       <td className={`direction ${output?.direction ?? 'neutral'}`}>{output?.direction ?? '-'}</td>
       <td>{formatNumber(symbol.current_price ?? symbol.result?.current_price)}</td>
+      <td>{formatNumber(currentPosition(symbol)?.quantity)}</td>
+      <td>{formatUSD(currentPosition(symbol)?.market_value_usd)}</td>
+      <td>{formatUSD(symbol.account_context?.sizing_envelope?.advisory_notional_cap_usd)}</td>
+      <td>{formatInteger(symbol.account_context?.sizing_envelope?.advisory_max_shares)}</td>
+      <td>{output?.position_management?.sizing_status ?? symbol.account_context?.sizing_envelope?.sizing_status ?? '-'}</td>
       <td>{symbol.result?.timeframe ?? '-'}</td>
       <td>{output?.entry_zone ? `${formatNumber(output.entry_zone.low)}-${formatNumber(output.entry_zone.high)}` : '-'}</td>
       <td>{formatNumber(output?.stop_loss ?? undefined)}</td>
@@ -167,6 +177,11 @@ function HistorySignalRow({ record, selected, onSelect }: { record: AnalysisHist
       <td>{record.result.symbol}</td>
       <td className={`direction ${output.direction}`}>{output.direction}</td>
       <td>{formatNumber(record.result.current_price)}</td>
+      <td>-</td>
+      <td>-</td>
+      <td>{formatUSD(output.position_management?.advisory_notional_cap_usd)}</td>
+      <td>{formatInteger(output.position_management?.advisory_max_shares)}</td>
+      <td>{output.position_management?.sizing_status ?? '-'}</td>
       <td>{record.result.timeframe}</td>
       <td>{output.entry_zone ? `${formatNumber(output.entry_zone.low)}-${formatNumber(output.entry_zone.high)}` : '-'}</td>
       <td>{formatNumber(output.stop_loss ?? undefined)}</td>
@@ -208,6 +223,20 @@ function normalizeSymbol(value: string): string | undefined {
 function formatNumber(value?: number | null): string {
   if (typeof value !== 'number' || Number.isNaN(value)) return '-';
   return value.toFixed(2);
+}
+
+function formatInteger(value?: number | null): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+  return String(Math.trunc(value));
+}
+
+function formatUSD(value?: number | null): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+  return value.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+}
+
+function currentPosition(symbol: SymbolState) {
+  return symbol.account_context?.positions.find((position) => position.symbol === symbol.symbol);
 }
 
 function formatDate(value: string): string {

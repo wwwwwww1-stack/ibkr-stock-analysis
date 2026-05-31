@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -90,6 +91,107 @@ func TestQueueCompletesSuccessfulJob(t *testing.T) {
 	}
 }
 
+func TestQueueRejectsPositionManagementSharesAboveEnvelopeAndKeepsPreviousStale(t *testing.T) {
+	maxShares := 50
+	client := &queueClient{output: outputWithPositionManagement(domain.PositionManagementOutput{
+		AccountAware:         true,
+		SizingStatus:         domain.SizingStatusAvailable,
+		AdvisoryAction:       domain.AdvisoryActionConsiderSetup,
+		AdvisoryMaxShares:    ptrInt(51),
+		ManualReviewRequired: true,
+		ManagementNotes:      []string{"手动复核：仓位上限以内才考虑。"},
+	})}
+	previous := domain.AnalysisResult{Symbol: "NVDA", Output: validOutput(domain.DirectionLong), UpdatedAt: time.Date(2026, 5, 30, 18, 0, 0, 0, time.UTC)}
+	queue := NewQueue(client, 1)
+
+	results := queue.RunBatch(context.Background(), []domain.AgentInput{accountInput(maxShares, 5000)}, map[string]domain.AnalysisResult{"NVDA": previous})
+
+	result := results[0]
+	if result.Status != domain.JobStatusFailed {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if result.Result == nil || !result.Result.Stale {
+		t.Fatalf("result = %#v, want stale previous result", result.Result)
+	}
+	if result.Error == "" || !contains(result.Error, "advisory_max_shares") {
+		t.Fatalf("error = %q, want advisory_max_shares validation error", result.Error)
+	}
+}
+
+func TestQueueRejectsPositionManagementNotionalAboveEnvelope(t *testing.T) {
+	client := &queueClient{output: outputWithPositionManagement(domain.PositionManagementOutput{
+		AccountAware:           true,
+		SizingStatus:           domain.SizingStatusAvailable,
+		AdvisoryAction:         domain.AdvisoryActionConsiderSetup,
+		AdvisoryNotionalCapUSD: ptrFloat(5000.01),
+		ManualReviewRequired:   true,
+		ManagementNotes:        []string{"手动复核：不要超过配置上限。"},
+	})}
+	queue := NewQueue(client, 1)
+
+	results := queue.RunBatch(context.Background(), []domain.AgentInput{accountInput(50, 5000)}, nil)
+
+	if results[0].Status != domain.JobStatusFailed || !contains(results[0].Error, "advisory_notional_cap_usd") {
+		t.Fatalf("result = %#v, want notional cap validation failure", results[0])
+	}
+}
+
+func TestQueueRejectsPositionManagementWithoutManualReview(t *testing.T) {
+	client := &queueClient{output: outputWithPositionManagement(domain.PositionManagementOutput{
+		AccountAware:         true,
+		SizingStatus:         domain.SizingStatusAvailable,
+		AdvisoryAction:       domain.AdvisoryActionConsiderSetup,
+		AdvisoryMaxShares:    ptrInt(10),
+		ManualReviewRequired: false,
+		ManagementNotes:      []string{"手动复核：观察触发。"},
+	})}
+	queue := NewQueue(client, 1)
+
+	results := queue.RunBatch(context.Background(), []domain.AgentInput{accountInput(50, 5000)}, nil)
+
+	if results[0].Status != domain.JobStatusFailed || !contains(results[0].Error, "manual_review_required") {
+		t.Fatalf("result = %#v, want manual_review_required validation failure", results[0])
+	}
+}
+
+func TestQueueRejectsPositionManagementExecutionLanguage(t *testing.T) {
+	client := &queueClient{output: outputWithPositionManagement(domain.PositionManagementOutput{
+		AccountAware:         true,
+		SizingStatus:         domain.SizingStatusAvailable,
+		AdvisoryAction:       domain.AdvisoryActionConsiderSetup,
+		AdvisoryMaxShares:    ptrInt(10),
+		ManualReviewRequired: true,
+		ManagementNotes:      []string{"submit order after breakout"},
+	})}
+	queue := NewQueue(client, 1)
+
+	results := queue.RunBatch(context.Background(), []domain.AgentInput{accountInput(50, 5000)}, nil)
+
+	if results[0].Status != domain.JobStatusFailed || !contains(results[0].Error, "execution language") {
+		t.Fatalf("result = %#v, want execution language validation failure", results[0])
+	}
+}
+
+func TestQueueAllowsValidPositionManagementInsideEnvelope(t *testing.T) {
+	client := &queueClient{output: outputWithPositionManagement(domain.PositionManagementOutput{
+		AccountAware:           true,
+		SizingStatus:           domain.SizingStatusAvailable,
+		AdvisoryAction:         domain.AdvisoryActionConsiderSetup,
+		AdvisoryMaxShares:      ptrInt(25),
+		AdvisoryNotionalCapUSD: ptrFloat(2500),
+		EstimatedRiskUSD:       ptrFloat(125),
+		ManualReviewRequired:   true,
+		ManagementNotes:        []string{"手动复核：只在触发和止损都清楚时考虑。"},
+	})}
+	queue := NewQueue(client, 1)
+
+	results := queue.RunBatch(context.Background(), []domain.AgentInput{accountInput(50, 5000)}, nil)
+
+	if results[0].Status != domain.JobStatusComplete {
+		t.Fatalf("status = %q error = %q, want complete", results[0].Status, results[0].Error)
+	}
+}
+
 func validOutput(direction domain.Direction) domain.AgentOutput {
 	output := domain.AgentOutput{
 		Direction:     direction,
@@ -109,4 +211,39 @@ func validOutput(direction domain.Direction) domain.AgentOutput {
 		output.RiskReward = &riskReward
 	}
 	return output
+}
+
+func outputWithPositionManagement(position domain.PositionManagementOutput) domain.AgentOutput {
+	output := validOutput(domain.DirectionLong)
+	output.SetupQuality = domain.SetupQualityAPlus
+	output.PositionManagement = &position
+	return output
+}
+
+func accountInput(maxShares int, advisoryCap float64) domain.AgentInput {
+	return domain.AgentInput{
+		Symbol:       "NVDA",
+		Timeframe:    domain.Timeframe5m,
+		CurrentPrice: 100,
+		AccountContext: &domain.AccountSnapshotContext{
+			AvailableCashUSD:       10000,
+			BuyingPowerUSD:         20000,
+			SnapshotAt:             time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+			MaxStockTradeAmountUSD: 10000,
+			SizingEnvelope: &domain.SizingEnvelope{
+				Symbol:                 "NVDA",
+				SizingStatus:           domain.SizingStatusAvailable,
+				AdvisoryNotionalCapUSD: advisoryCap,
+				AdvisoryMaxShares:      &maxShares,
+			},
+		},
+	}
+}
+
+func ptrInt(value int) *int { return &value }
+
+func ptrFloat(value float64) *float64 { return &value }
+
+func contains(value string, fragment string) bool {
+	return strings.Contains(value, fragment)
 }
