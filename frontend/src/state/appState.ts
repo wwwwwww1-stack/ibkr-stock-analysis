@@ -46,8 +46,10 @@ export function defaultState(): AppState {
       ibkr_client_id: 1001,
       watchlist: [],
       selected_timeframe: '5m',
+      chart_window: null,
     },
     connection_status: 'disconnected',
+    scheduled_analysis_enabled: false,
     symbols: [],
   };
 }
@@ -61,4 +63,3 @@ function existingOrNew(symbols: SymbolState[], symbol: string): SymbolState {
     }
   );
 }
-

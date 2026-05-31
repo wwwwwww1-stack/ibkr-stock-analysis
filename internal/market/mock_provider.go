@@ -102,6 +102,24 @@ func (p *MockProvider) HistoricalBars(ctx context.Context, symbol string, timefr
 	return out, nil
 }
 
+func (p *MockProvider) HistoricalBarsRange(ctx context.Context, symbol string, timeframe domain.Timeframe, start time.Time, end time.Time) ([]domain.Bar, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	bars, err := p.HistoricalBars(ctx, symbol, timeframe, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Bar, 0, len(bars))
+	for _, bar := range bars {
+		if bar.Time.Before(start) || !bar.Time.Before(end) {
+			continue
+		}
+		out = append(out, bar)
+	}
+	return out, nil
+}
+
 func (p *MockProvider) SetHistoricalBars(symbol string, timeframe domain.Timeframe, bars []domain.Bar) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

@@ -3,6 +3,7 @@ package market
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,11 +105,45 @@ func (p *IBKRProvider) HistoricalBars(ctx context.Context, symbol string, timefr
 	params := historicalRequestParameters(timeframe, limit)
 	p.client.ReqHistoricalData(reqID, usStockContract(symbol), "", params.Duration, params.BarSize, params.WhatToShow, true, 2, false, nil)
 
+	bars, err := p.waitHistoricalBars(ctx, reqID, result)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(bars) > limit {
+		bars = bars[len(bars)-limit:]
+	}
+	return bars, nil
+}
+
+func (p *IBKRProvider) HistoricalBarsRange(ctx context.Context, symbol string, timeframe domain.Timeframe, start time.Time, end time.Time) ([]domain.Bar, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !p.client.IsConnected() {
+		return nil, fmt.Errorf("ibkr is not connected")
+	}
+	reqID := p.nextID.Add(1)
+	result := p.wrapper.addHistorical(reqID)
+	params := historicalRangeRequestParameters(timeframe, start, end)
+	p.client.ReqHistoricalData(reqID, usStockContract(symbol), params.EndDateTime, params.Duration, params.BarSize, params.WhatToShow, true, 2, false, nil)
+
+	bars, err := p.waitHistoricalBars(ctx, reqID, result)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]domain.Bar, 0, len(bars))
+	for _, bar := range bars {
+		if bar.Time.Before(start) || !bar.Time.Before(end) {
+			continue
+		}
+		filtered = append(filtered, bar)
+	}
+	return filtered, nil
+}
+
+func (p *IBKRProvider) waitHistoricalBars(ctx context.Context, reqID int64, result historicalResult) ([]domain.Bar, error) {
 	select {
 	case bars := <-result.bars:
-		if limit > 0 && len(bars) > limit {
-			bars = bars[len(bars)-limit:]
-		}
 		return bars, nil
 	case err := <-result.errs:
 		return nil, err
@@ -133,13 +168,23 @@ type historicalParams struct {
 	WhatToShow string
 }
 
+type historicalRangeParams struct {
+	EndDateTime string
+	Duration    string
+	BarSize     string
+	WhatToShow  string
+}
+
 func historicalRequestParameters(timeframe domain.Timeframe, limit int) historicalParams {
 	if limit <= 0 {
 		limit = 100
 	}
 	duration := "2 D"
-	if timeframe == domain.Timeframe1h {
-		duration = "2 W"
+	switch timeframe {
+	case domain.Timeframe15m:
+		duration = "1 W"
+	case domain.Timeframe1h:
+		duration = "1 M"
 	}
 	if limit > 300 {
 		duration = "1 M"
@@ -149,6 +194,27 @@ func historicalRequestParameters(timeframe domain.Timeframe, limit int) historic
 		BarSize:    ibkrBarSize(timeframe),
 		WhatToShow: "TRADES",
 	}
+}
+
+func historicalRangeRequestParameters(timeframe domain.Timeframe, start time.Time, end time.Time) historicalRangeParams {
+	duration := "1 D"
+	if end.After(start) {
+		days := int(math.Ceil(end.Sub(start).Hours() / 24))
+		if days < 1 {
+			days = 1
+		}
+		duration = fmt.Sprintf("%d D", days)
+	}
+	return historicalRangeParams{
+		EndDateTime: formatIBKREndDateTime(end),
+		Duration:    duration,
+		BarSize:     ibkrBarSize(timeframe),
+		WhatToShow:  "TRADES",
+	}
+}
+
+func formatIBKREndDateTime(t time.Time) string {
+	return t.UTC().Format("20060102 15:04:05 UTC")
 }
 
 func ibkrBarSize(timeframe domain.Timeframe) string {

@@ -6,8 +6,20 @@ export function ConnectIBKR():Promise<domain.AppState>;
 
 export function DisconnectIBKR():Promise<domain.AppState>;
 
+export function ExportAnalysisHistoryCSV(arg1:domain.AnalysisHistoryQuery):Promise<string>;
+
+export function GetAnalysisHistory(arg1:domain.AnalysisHistoryQuery):Promise<domain.AnalysisHistoryPage>;
+
 export function GetState():Promise<domain.AppState>;
 
-export function RunAnalysisNow():Promise<domain.AppState>;
+export function ListChartWindows():Promise<Array<domain.ChartWindow>>;
+
+export function RunAnalysisNow(arg1:string):Promise<domain.AppState>;
+
+export function RunBacktest(arg1:domain.BacktestRequest):Promise<domain.BacktestReport>;
+
+export function RunScreenshotAnalysis(arg1:string):Promise<domain.AppState>;
 
 export function SaveSettings(arg1:domain.Settings):Promise<domain.AppState>;
+
+export function SetScheduledAnalysisEnabled(arg1:boolean):Promise<domain.AppState>;

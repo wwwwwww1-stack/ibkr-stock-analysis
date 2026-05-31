@@ -29,18 +29,24 @@ func TestUSStockContractUsesSmartUSD(t *testing.T) {
 }
 
 func TestHistoricalRequestParametersForTimeframes(t *testing.T) {
-	tests := map[domain.Timeframe]string{
-		domain.Timeframe1m:  "1 min",
-		domain.Timeframe5m:  "5 mins",
-		domain.Timeframe15m: "15 mins",
-		domain.Timeframe1h:  "1 hour",
+	tests := map[domain.Timeframe]struct {
+		barSize  string
+		duration string
+	}{
+		domain.Timeframe1m:  {barSize: "1 min", duration: "2 D"},
+		domain.Timeframe5m:  {barSize: "5 mins", duration: "2 D"},
+		domain.Timeframe15m: {barSize: "15 mins", duration: "1 W"},
+		domain.Timeframe1h:  {barSize: "1 hour", duration: "1 M"},
 	}
 
-	for timeframe, wantBarSize := range tests {
+	for timeframe, want := range tests {
 		t.Run(timeframe.String(), func(t *testing.T) {
 			params := historicalRequestParameters(timeframe, 100)
-			if params.BarSize != wantBarSize {
-				t.Fatalf("bar size = %q, want %q", params.BarSize, wantBarSize)
+			if params.BarSize != want.barSize {
+				t.Fatalf("bar size = %q, want %q", params.BarSize, want.barSize)
+			}
+			if params.Duration != want.duration {
+				t.Fatalf("duration = %q, want %q", params.Duration, want.duration)
 			}
 			if params.WhatToShow != "TRADES" {
 				t.Fatalf("whatToShow = %q, want TRADES", params.WhatToShow)

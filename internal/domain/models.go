@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -119,12 +120,82 @@ type DerivedFeatures struct {
 	LastCloseRelativeToRange string    `json:"last_close_relative_to_range"`
 }
 
+type ChartImageInput struct {
+	Provided   bool       `json:"provided"`
+	Source     string     `json:"source,omitempty"`
+	MimeType   string     `json:"mime_type,omitempty"`
+	CapturedAt *time.Time `json:"captured_at,omitempty"`
+	Path       string     `json:"-"`
+}
+
+type TimeframeContext struct {
+	Timeframe    Timeframe        `json:"timeframe"`
+	Available    bool             `json:"available"`
+	Error        string           `json:"error,omitempty"`
+	CurrentPrice *float64         `json:"current_price,omitempty"`
+	Bars         []Bar            `json:"bars,omitempty"`
+	Derived      *DerivedFeatures `json:"derived,omitempty"`
+}
+
+type TimeframeContextSummary struct {
+	Timeframe         Timeframe        `json:"timeframe"`
+	Available         bool             `json:"available"`
+	Error             string           `json:"error,omitempty"`
+	CurrentPrice      *float64         `json:"current_price,omitempty"`
+	BarCount          int              `json:"bar_count"`
+	LastClosedBarTime *time.Time       `json:"last_closed_bar_time,omitempty"`
+	Derived           *DerivedFeatures `json:"derived,omitempty"`
+}
+
+func SummarizeTimeframeContexts(contexts []TimeframeContext) []TimeframeContextSummary {
+	if len(contexts) == 0 {
+		return []TimeframeContextSummary{}
+	}
+	summaries := make([]TimeframeContextSummary, 0, len(contexts))
+	for _, context := range contexts {
+		summary := TimeframeContextSummary{
+			Timeframe:    context.Timeframe,
+			Available:    context.Available,
+			Error:        context.Error,
+			CurrentPrice: copyFloat64Ptr(context.CurrentPrice),
+			BarCount:     len(context.Bars),
+			Derived:      copyDerivedFeaturesPtr(context.Derived),
+		}
+		if len(context.Bars) > 0 {
+			lastClosed := context.Bars[len(context.Bars)-1].Time
+			summary.LastClosedBarTime = &lastClosed
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries
+}
+
+func copyFloat64Ptr(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func copyDerivedFeaturesPtr(value *DerivedFeatures) *DerivedFeatures {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	copied.RecentSwingHighs = append([]float64(nil), value.RecentSwingHighs...)
+	copied.RecentSwingLows = append([]float64(nil), value.RecentSwingLows...)
+	return &copied
+}
+
 type AgentInput struct {
-	Symbol       string          `json:"symbol"`
-	Timeframe    Timeframe       `json:"timeframe"`
-	CurrentPrice float64         `json:"current_price"`
-	Bars         []Bar           `json:"bars"`
-	Derived      DerivedFeatures `json:"derived"`
+	Symbol                string             `json:"symbol"`
+	Timeframe             Timeframe          `json:"timeframe"`
+	CurrentPrice          float64            `json:"current_price"`
+	Bars                  []Bar              `json:"bars"`
+	Derived               DerivedFeatures    `json:"derived"`
+	MultiTimeframeContext []TimeframeContext `json:"multi_timeframe_context,omitempty"`
+	ChartImage            *ChartImageInput   `json:"chart_image,omitempty"`
 }
 
 type EntryZone struct {
@@ -132,17 +203,33 @@ type EntryZone struct {
 	High float64 `json:"high"`
 }
 
+type SetupQuality string
+
+const (
+	SetupQualityAPlus SetupQuality = "a_plus"
+	SetupQualityA     SetupQuality = "a"
+	SetupQualityB     SetupQuality = "b"
+	SetupQualityC     SetupQuality = "c"
+	SetupQualityNone  SetupQuality = "none"
+)
+
 type AgentOutput struct {
-	Direction     Direction  `json:"direction"`
-	EntryZone     *EntryZone `json:"entry_zone,omitempty"`
-	StopLoss      *float64   `json:"stop_loss,omitempty"`
-	TakeProfit    []float64  `json:"take_profit"`
-	RiskReward    *float64   `json:"risk_reward,omitempty"`
-	Confidence    float64    `json:"confidence"`
-	Summary       string     `json:"summary"`
-	PriceAction   []string   `json:"price_action"`
-	InvalidatedIf string     `json:"invalidated_if"`
-	GeneratedAt   time.Time  `json:"generated_at"`
+	Direction        Direction    `json:"direction"`
+	SetupQuality     SetupQuality `json:"setup_quality"`
+	EntryZone        *EntryZone   `json:"entry_zone,omitempty"`
+	StopLoss         *float64     `json:"stop_loss,omitempty"`
+	TakeProfit       []float64    `json:"take_profit"`
+	RiskReward       *float64     `json:"risk_reward,omitempty"`
+	Confidence       float64      `json:"confidence"`
+	MarketRegime     string       `json:"market_regime"`
+	TradeThesis      string       `json:"trade_thesis"`
+	Counterargument  string       `json:"counterargument"`
+	NoTradeReason    string       `json:"no_trade_reason"`
+	RejectionReasons []string     `json:"rejection_reasons"`
+	Summary          string       `json:"summary"`
+	PriceAction      []string     `json:"price_action"`
+	InvalidatedIf    string       `json:"invalidated_if"`
+	GeneratedAt      time.Time    `json:"generated_at"`
 }
 
 func (o AgentOutput) Validate() error {
@@ -152,11 +239,25 @@ func (o AgentOutput) Validate() error {
 	default:
 		problems = append(problems, "direction must be long, short, or neutral")
 	}
+	switch o.SetupQuality {
+	case SetupQualityAPlus, SetupQualityA, SetupQualityB, SetupQualityC, SetupQualityNone:
+	default:
+		problems = append(problems, "setup_quality must be a_plus, a, b, c, or none")
+	}
+	if o.Direction == DirectionNeutral && o.SetupQuality == SetupQualityAPlus {
+		problems = append(problems, "setup_quality a_plus requires a long or short direction")
+	}
 	if o.Confidence < 0 || o.Confidence > 1 {
 		problems = append(problems, "confidence must be between 0 and 1")
 	}
 	if o.GeneratedAt.IsZero() {
 		problems = append(problems, "generated_at must be present")
+	}
+	if strings.TrimSpace(o.MarketRegime) == "" {
+		problems = append(problems, "market_regime must be present")
+	}
+	if strings.TrimSpace(o.Counterargument) == "" {
+		problems = append(problems, "counterargument must be present")
 	}
 	if strings.TrimSpace(o.Summary) == "" {
 		problems = append(problems, "summary must be present")
@@ -180,6 +281,12 @@ func (o AgentOutput) Validate() error {
 		if o.RiskReward == nil || *o.RiskReward <= 0 {
 			problems = append(problems, "risk_reward must be positive for directional analysis")
 		}
+		if strings.TrimSpace(o.TradeThesis) == "" {
+			problems = append(problems, "trade_thesis must be present for directional analysis")
+		}
+	}
+	if o.Direction == DirectionNeutral && strings.TrimSpace(o.NoTradeReason) == "" {
+		problems = append(problems, "no_trade_reason must be present for neutral analysis")
 	}
 
 	if len(problems) > 0 {
@@ -190,13 +297,204 @@ func (o AgentOutput) Validate() error {
 }
 
 type AnalysisResult struct {
-	Symbol       string      `json:"symbol"`
-	Timeframe    Timeframe   `json:"timeframe"`
-	CurrentPrice float64     `json:"current_price"`
-	Output       AgentOutput `json:"output"`
-	Stale        bool        `json:"stale"`
-	Error        string      `json:"error,omitempty"`
-	UpdatedAt    time.Time   `json:"updated_at"`
+	Symbol           string                    `json:"symbol"`
+	Timeframe        Timeframe                 `json:"timeframe"`
+	CurrentPrice     float64                   `json:"current_price"`
+	Output           AgentOutput               `json:"output"`
+	ContextSummaries []TimeframeContextSummary `json:"context_summaries,omitempty"`
+	Stale            bool                      `json:"stale"`
+	Error            string                    `json:"error,omitempty"`
+	UpdatedAt        time.Time                 `json:"updated_at"`
+}
+
+type AnalysisHistoryQuery struct {
+	Symbol    string    `json:"symbol,omitempty"`
+	Timeframe Timeframe `json:"timeframe,omitempty"`
+	Direction Direction `json:"direction,omitempty"`
+	Limit     int       `json:"limit"`
+	Offset    int       `json:"offset"`
+}
+
+type AnalysisHistoryRecord struct {
+	ID     int64          `json:"id"`
+	Result AnalysisResult `json:"result"`
+}
+
+type AnalysisHistoryPage struct {
+	Records []AnalysisHistoryRecord `json:"records"`
+	Total   int                     `json:"total"`
+	Limit   int                     `json:"limit"`
+	Offset  int                     `json:"offset"`
+}
+
+type BacktestExitReason string
+
+const (
+	BacktestExitTakeProfit BacktestExitReason = "take_profit"
+	BacktestExitStopLoss   BacktestExitReason = "stop_loss"
+	BacktestExitEndOfDay   BacktestExitReason = "end_of_day"
+	BacktestExitPartial1R  BacktestExitReason = "partial_1r"
+	BacktestExitBreakeven  BacktestExitReason = "breakeven"
+)
+
+type BacktestRequest struct {
+	Symbol             string    `json:"symbol"`
+	Date               string    `json:"date,omitempty"`
+	StartDate          string    `json:"start_date,omitempty"`
+	EndDate            string    `json:"end_date,omitempty"`
+	StartTime          string    `json:"start_time,omitempty"`
+	EndTime            string    `json:"end_time,omitempty"`
+	Timeframe          Timeframe `json:"timeframe,omitempty"`
+	ShareQuantity      int       `json:"share_quantity"`
+	SlippagePerShare   float64   `json:"slippage_per_share"`
+	CommissionPerOrder float64   `json:"commission_per_order"`
+}
+
+type BacktestProgressStage string
+
+const (
+	BacktestProgressFetching  BacktestProgressStage = "fetching"
+	BacktestProgressAnalyzing BacktestProgressStage = "analyzing"
+	BacktestProgressComplete  BacktestProgressStage = "complete"
+)
+
+type BacktestProgress struct {
+	Symbol        string                `json:"symbol"`
+	Stage         BacktestProgressStage `json:"stage"`
+	ProcessedBars int                   `json:"processed_bars"`
+	TotalBars     int                   `json:"total_bars"`
+	CurrentTime   *time.Time            `json:"current_time,omitempty"`
+	Message       string                `json:"message"`
+}
+
+const MaxBacktestSlippagePerShare = 1.00
+
+func ValidateBacktestCosts(slippagePerShare float64, commissionPerOrder float64) error {
+	if slippagePerShare < 0 || math.IsNaN(slippagePerShare) || math.IsInf(slippagePerShare, 0) {
+		return fmt.Errorf("slippage_per_share must be non-negative")
+	}
+	if slippagePerShare > MaxBacktestSlippagePerShare {
+		return fmt.Errorf("slippage_per_share must be at most $%.2f per share", MaxBacktestSlippagePerShare)
+	}
+	if commissionPerOrder < 0 || math.IsNaN(commissionPerOrder) || math.IsInf(commissionPerOrder, 0) {
+		return fmt.Errorf("commission_per_order must be non-negative")
+	}
+	return nil
+}
+
+type BacktestTrade struct {
+	Symbol           string             `json:"symbol"`
+	Direction        Direction          `json:"direction"`
+	SetupQuality     SetupQuality       `json:"setup_quality"`
+	EntryTime        time.Time          `json:"entry_time"`
+	EntryPrice       float64            `json:"entry_price"`
+	ExitTime         time.Time          `json:"exit_time"`
+	ExitPrice        float64            `json:"exit_price"`
+	ExitReason       BacktestExitReason `json:"exit_reason"`
+	ExitLegs         []BacktestExitLeg  `json:"exit_legs"`
+	Shares           int                `json:"shares"`
+	InitialStopLoss  float64            `json:"initial_stop_loss"`
+	StopLoss         float64            `json:"stop_loss"`
+	TakeProfit       float64            `json:"take_profit"`
+	GrossPnL         float64            `json:"gross_pnl"`
+	Commission       float64            `json:"commission"`
+	NetPnL           float64            `json:"net_pnl"`
+	ReturnPct        float64            `json:"return_pct"`
+	SignalTime       time.Time          `json:"signal_time"`
+	MarketRegime     string             `json:"market_regime"`
+	TradeThesis      string             `json:"trade_thesis"`
+	Counterargument  string             `json:"counterargument"`
+	NoTradeReason    string             `json:"no_trade_reason"`
+	RejectionReasons []string           `json:"rejection_reasons"`
+	Summary          string             `json:"summary"`
+	Confidence       float64            `json:"confidence"`
+	InvalidatedIf    string             `json:"invalidated_if"`
+}
+
+type BacktestExitLeg struct {
+	Time       time.Time          `json:"time"`
+	Price      float64            `json:"price"`
+	Reason     BacktestExitReason `json:"reason"`
+	Shares     int                `json:"shares"`
+	GrossPnL   float64            `json:"gross_pnl"`
+	Commission float64            `json:"commission"`
+	NetPnL     float64            `json:"net_pnl"`
+	ReturnPct  float64            `json:"return_pct"`
+}
+
+type BacktestSkippedSetup struct {
+	Time             time.Time    `json:"time"`
+	Direction        Direction    `json:"direction"`
+	SetupQuality     SetupQuality `json:"setup_quality"`
+	Reason           string       `json:"reason"`
+	MarketRegime     string       `json:"market_regime"`
+	TradeThesis      string       `json:"trade_thesis"`
+	Counterargument  string       `json:"counterargument"`
+	NoTradeReason    string       `json:"no_trade_reason"`
+	RejectionReasons []string     `json:"rejection_reasons"`
+	Summary          string       `json:"summary"`
+	Confidence       float64      `json:"confidence"`
+}
+
+type BacktestOpenPosition struct {
+	Symbol              string       `json:"symbol"`
+	Direction           Direction    `json:"direction"`
+	SetupQuality        SetupQuality `json:"setup_quality"`
+	EntryTime           time.Time    `json:"entry_time"`
+	EntryPrice          float64      `json:"entry_price"`
+	MarkTime            time.Time    `json:"mark_time"`
+	MarkPrice           float64      `json:"mark_price"`
+	Shares              int          `json:"shares"`
+	RemainingShares     int          `json:"remaining_shares"`
+	InitialShares       int          `json:"initial_shares"`
+	PartialTaken        bool         `json:"partial_taken"`
+	InitialStopLoss     float64      `json:"initial_stop_loss"`
+	StopLoss            float64      `json:"stop_loss"`
+	TakeProfit          float64      `json:"take_profit"`
+	RealizedGrossPnL    float64      `json:"realized_gross_pnl"`
+	RealizedCommission  float64      `json:"realized_commission"`
+	RealizedNetPnL      float64      `json:"realized_net_pnl"`
+	UnrealizedGrossPnL  float64      `json:"unrealized_gross_pnl"`
+	Commission          float64      `json:"commission"`
+	UnrealizedNetPnL    float64      `json:"unrealized_net_pnl"`
+	UnrealizedReturnPct float64      `json:"unrealized_return_pct"`
+	SignalTime          time.Time    `json:"signal_time"`
+	MarketRegime        string       `json:"market_regime"`
+	TradeThesis         string       `json:"trade_thesis"`
+	Counterargument     string       `json:"counterargument"`
+	NoTradeReason       string       `json:"no_trade_reason"`
+	RejectionReasons    []string     `json:"rejection_reasons"`
+	Summary             string       `json:"summary"`
+	Confidence          float64      `json:"confidence"`
+	InvalidatedIf       string       `json:"invalidated_if"`
+}
+
+type BacktestReport struct {
+	Symbol             string                 `json:"symbol"`
+	Date               string                 `json:"date"`
+	StartDate          string                 `json:"start_date"`
+	EndDate            string                 `json:"end_date"`
+	Timeframe          Timeframe              `json:"timeframe"`
+	ShareQuantity      int                    `json:"share_quantity"`
+	SlippagePerShare   float64                `json:"slippage_per_share"`
+	CommissionPerOrder float64                `json:"commission_per_order"`
+	StartTime          time.Time              `json:"start_time"`
+	EndTime            time.Time              `json:"end_time"`
+	BarCount           int                    `json:"bar_count"`
+	TradeCount         int                    `json:"trade_count"`
+	WinningTrades      int                    `json:"winning_trades"`
+	LosingTrades       int                    `json:"losing_trades"`
+	WinRatePct         float64                `json:"win_rate_pct"`
+	TotalGrossPnL      float64                `json:"total_gross_pnl"`
+	TotalCommission    float64                `json:"total_commission"`
+	TotalNetPnL        float64                `json:"total_net_pnl"`
+	TotalReturnPct     float64                `json:"total_return_pct"`
+	MaxDrawdown        float64                `json:"max_drawdown"`
+	Trades             []BacktestTrade        `json:"trades"`
+	SkippedSetups      []BacktestSkippedSetup `json:"skipped_setups"`
+	SkipReasonCounts   map[string]int         `json:"skip_reason_counts"`
+	OpenPosition       *BacktestOpenPosition  `json:"open_position,omitempty"`
+	GeneratedAt        time.Time              `json:"generated_at"`
 }
 
 type SymbolState struct {
@@ -211,11 +509,18 @@ type SymbolState struct {
 }
 
 type Settings struct {
-	IBKRHost          string    `json:"ibkr_host"`
-	IBKRPort          int       `json:"ibkr_port"`
-	IBKRClientID      int       `json:"ibkr_client_id"`
-	Watchlist         []string  `json:"watchlist"`
-	SelectedTimeframe Timeframe `json:"selected_timeframe"`
+	IBKRHost          string       `json:"ibkr_host"`
+	IBKRPort          int          `json:"ibkr_port"`
+	IBKRClientID      int          `json:"ibkr_client_id"`
+	Watchlist         []string     `json:"watchlist"`
+	SelectedTimeframe Timeframe    `json:"selected_timeframe"`
+	ChartWindow       *ChartWindow `json:"chart_window,omitempty"`
+}
+
+type ChartWindow struct {
+	ID      int    `json:"id"`
+	AppName string `json:"app_name"`
+	Title   string `json:"title,omitempty"`
 }
 
 func DefaultSettings() Settings {
@@ -241,14 +546,22 @@ func (s Settings) Normalize() Settings {
 	if _, err := ParseTimeframe(string(s.SelectedTimeframe)); err != nil {
 		s.SelectedTimeframe = Timeframe5m
 	}
+	if s.ChartWindow != nil {
+		s.ChartWindow.AppName = strings.TrimSpace(s.ChartWindow.AppName)
+		s.ChartWindow.Title = strings.TrimSpace(s.ChartWindow.Title)
+		if s.ChartWindow.ID <= 0 && s.ChartWindow.AppName == "" && s.ChartWindow.Title == "" {
+			s.ChartWindow = nil
+		}
+	}
 	input := strings.Join(s.Watchlist, ",")
 	s.Watchlist = ParseWatchlist(input)
 	return s
 }
 
 type AppState struct {
-	Settings         Settings         `json:"settings"`
-	ConnectionStatus ConnectionStatus `json:"connection_status"`
-	Symbols          []SymbolState    `json:"symbols"`
-	LastError        string           `json:"last_error,omitempty"`
+	Settings                 Settings         `json:"settings"`
+	ConnectionStatus         ConnectionStatus `json:"connection_status"`
+	ScheduledAnalysisEnabled bool             `json:"scheduled_analysis_enabled"`
+	Symbols                  []SymbolState    `json:"symbols"`
+	LastError                string           `json:"last_error,omitempty"`
 }

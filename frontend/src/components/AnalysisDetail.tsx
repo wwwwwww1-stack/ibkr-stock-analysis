@@ -1,10 +1,18 @@
-import type { SymbolState } from '../types/domain';
+import type { TimeframeContextSummary, SymbolState } from '../types/domain';
 
 interface Props {
   symbol?: SymbolState;
+  connected?: boolean;
+  onAnalyze?(symbol: string): void;
+  onScreenshotAnalyze?(symbol: string): void;
 }
 
-export function AnalysisDetail({ symbol }: Props) {
+export function AnalysisDetail({
+  symbol,
+  connected = false,
+  onAnalyze,
+  onScreenshotAnalyze,
+}: Props) {
   if (!symbol) {
     return (
       <aside className="panel detail-panel">
@@ -15,11 +23,24 @@ export function AnalysisDetail({ symbol }: Props) {
   }
 
   const output = symbol.result?.output;
+  const contextSummaries = symbol.result?.context_summaries ?? [];
   return (
     <aside className="panel detail-panel" aria-label="Selected symbol analysis">
       <div className="detail-heading">
         <h2>{symbol.symbol}</h2>
-        <span className={`job-status ${symbol.job_status}`}>{symbol.job_status}</span>
+        <div className="detail-actions">
+          <button type="button" onClick={() => onAnalyze?.(symbol.symbol)} disabled={!connected || !onAnalyze}>
+            Analyze
+          </button>
+          <button
+            type="button"
+            onClick={() => onScreenshotAnalyze?.(symbol.symbol)}
+            disabled={!connected || !onScreenshotAnalyze}
+          >
+            Screenshot Analyze
+          </button>
+          <span className={`job-status ${symbol.job_status}`}>{symbol.job_status}</span>
+        </div>
       </div>
 
       {symbol.error ? <div className="error-box">{symbol.error}</div> : null}
@@ -56,6 +77,16 @@ export function AnalysisDetail({ symbol }: Props) {
               </div>
             </dl>
           </section>
+          {contextSummaries.length ? (
+            <section className="timeframe-context" aria-label="Multi-timeframe context">
+              <h3>Multi-Timeframe Context</h3>
+              <div className="timeframe-context-list">
+                {contextSummaries.map((summary) => (
+                  <TimeframeContextRow key={summary.timeframe} summary={summary} />
+                ))}
+              </div>
+            </section>
+          ) : null}
         </>
       ) : (
         <p>No analysis yet.</p>
@@ -64,3 +95,62 @@ export function AnalysisDetail({ symbol }: Props) {
   );
 }
 
+function TimeframeContextRow({ summary }: { summary: TimeframeContextSummary }) {
+  if (!summary.available) {
+    return (
+      <article className="timeframe-context-row unavailable">
+        <header>
+          <strong>{summary.timeframe}</strong>
+          <span>Unavailable</span>
+        </header>
+        <p>{summary.error || 'No Data'}</p>
+      </article>
+    );
+  }
+
+  const derived = summary.derived;
+  return (
+    <article className="timeframe-context-row">
+      <header>
+        <strong>{summary.timeframe}</strong>
+        <span>{summary.bar_count} bars</span>
+      </header>
+      <dl>
+        <div>
+          <dt>Price</dt>
+          <dd>{formatNumber(summary.current_price)}</dd>
+        </div>
+        <div>
+          <dt>Range</dt>
+          <dd>{derived ? `${formatNumber(derived.session_high)} / ${formatNumber(derived.session_low)}` : '-'}</dd>
+        </div>
+        <div>
+          <dt>Swings</dt>
+          <dd>
+            {derived
+              ? `${formatValues(derived.recent_swing_highs)} / ${formatValues(derived.recent_swing_lows)}`
+              : '-'}
+          </dd>
+        </div>
+        <div>
+          <dt>ATR</dt>
+          <dd>{formatNumber(derived?.atr)}</dd>
+        </div>
+        <div>
+          <dt>Volume</dt>
+          <dd>{derived?.volume_context ?? '-'}</dd>
+        </div>
+      </dl>
+    </article>
+  );
+}
+
+function formatNumber(value?: number | null): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+  return value.toFixed(2);
+}
+
+function formatValues(values?: number[]): string {
+  if (!values?.length) return '-';
+  return values.map((value) => formatNumber(value)).join(', ');
+}

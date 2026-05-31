@@ -54,12 +54,13 @@ func (q *Queue) RunBatch(ctx context.Context, inputs []domain.AgentInput, previo
 				return
 			}
 			result := domain.AnalysisResult{
-				Symbol:       normalize(input.Symbol),
-				Timeframe:    input.Timeframe,
-				CurrentPrice: input.CurrentPrice,
-				Output:       output,
-				Stale:        false,
-				UpdatedAt:    time.Now().UTC(),
+				Symbol:           normalize(input.Symbol),
+				Timeframe:        input.Timeframe,
+				CurrentPrice:     input.CurrentPrice,
+				Output:           output,
+				ContextSummaries: domain.SummarizeTimeframeContexts(input.MultiTimeframeContext),
+				Stale:            false,
+				UpdatedAt:        time.Now().UTC(),
 			}
 			results[i].Status = domain.JobStatusComplete
 			results[i].Result = &result

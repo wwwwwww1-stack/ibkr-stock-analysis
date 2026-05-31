@@ -1,11 +1,26 @@
-import type { AppState, Settings } from '../types/domain';
+import type {
+  AnalysisHistoryPage,
+  AnalysisHistoryQuery,
+  AppState,
+  BacktestProgress,
+  BacktestReport,
+  BacktestRequest,
+  ChartWindow,
+  Settings,
+} from '../types/domain';
 
 export interface BackendAPI {
   getState(): Promise<AppState>;
   saveSettings(settings: Settings): Promise<AppState>;
   connectIBKR(): Promise<AppState>;
   disconnectIBKR(): Promise<AppState>;
-  runAnalysisNow(): Promise<AppState>;
+  setScheduledAnalysisEnabled(enabled: boolean): Promise<AppState>;
+  runAnalysisNow(symbol: string): Promise<AppState>;
+  runScreenshotAnalysis(symbol: string): Promise<AppState>;
+  runBacktest(request: BacktestRequest): Promise<BacktestReport>;
+  getAnalysisHistory(query: AnalysisHistoryQuery): Promise<AnalysisHistoryPage>;
+  exportAnalysisHistoryCSV(query: AnalysisHistoryQuery): Promise<string>;
+  listChartWindows(): Promise<ChartWindow[]>;
 }
 
 declare global {
@@ -17,12 +32,18 @@ declare global {
           SaveSettings(settings: Settings): Promise<AppState>;
           ConnectIBKR(): Promise<AppState>;
           DisconnectIBKR(): Promise<AppState>;
-          RunAnalysisNow(): Promise<AppState>;
+          SetScheduledAnalysisEnabled(enabled: boolean): Promise<AppState>;
+          RunAnalysisNow(symbol: string): Promise<AppState>;
+          RunScreenshotAnalysis(symbol: string): Promise<AppState>;
+          RunBacktest(request: BacktestRequest): Promise<BacktestReport>;
+          GetAnalysisHistory(query: AnalysisHistoryQuery): Promise<AnalysisHistoryPage>;
+          ExportAnalysisHistoryCSV(query: AnalysisHistoryQuery): Promise<string>;
+          ListChartWindows(): Promise<ChartWindow[]>;
         };
       };
     };
     runtime?: {
-      EventsOn?(eventName: string, callback: (payload: AppState) => void): () => void;
+      EventsOn?<T = unknown>(eventName: string, callback: (payload: T) => void): () => void;
     };
   }
 }
@@ -32,16 +53,28 @@ export const wailsBackend: BackendAPI = {
   saveSettings: (settings) => app().SaveSettings(settings),
   connectIBKR: () => app().ConnectIBKR(),
   disconnectIBKR: () => app().DisconnectIBKR(),
-  runAnalysisNow: () => app().RunAnalysisNow(),
+  setScheduledAnalysisEnabled: (enabled) => app().SetScheduledAnalysisEnabled(enabled),
+  runAnalysisNow: (symbol) => app().RunAnalysisNow(symbol),
+  runScreenshotAnalysis: (symbol) => app().RunScreenshotAnalysis(symbol),
+  runBacktest: (request) => app().RunBacktest(request),
+  getAnalysisHistory: (query) => app().GetAnalysisHistory(query),
+  exportAnalysisHistoryCSV: (query) => app().ExportAnalysisHistoryCSV(query),
+  listChartWindows: () => app().ListChartWindows(),
 };
 
 export function subscribeStateEvents(callback: (state: AppState) => void): () => void {
   const runtime = window.runtime;
   if (!runtime?.EventsOn) return () => undefined;
   const offCallbacks = ['connection:update', 'market:update', 'analysis:update', 'analysis:error', 'settings:update'].map((event) =>
-    runtime.EventsOn!(event, callback),
+    runtime.EventsOn!<AppState>(event, callback),
   );
   return () => offCallbacks.forEach((off) => off?.());
+}
+
+export function subscribeBacktestProgress(callback: (progress: BacktestProgress) => void): () => void {
+  const runtime = window.runtime;
+  if (!runtime?.EventsOn) return () => undefined;
+  return runtime.EventsOn<BacktestProgress>('backtest:progress', callback);
 }
 
 function app() {
@@ -51,4 +84,3 @@ function app() {
   }
   return appAPI;
 }
-

@@ -37,6 +37,25 @@ func New() *Scheduler {
 	}
 }
 
+func NextBoundaryRun(now time.Time, timeframe domain.Timeframe, lead time.Duration) (time.Time, time.Time) {
+	now = now.UTC()
+	duration := timeframe.Duration()
+	if duration <= 0 {
+		return now, now
+	}
+	if lead < 0 {
+		lead = 0
+	}
+
+	boundary := now.Truncate(duration).Add(duration)
+	runAt := boundary.Add(-lead)
+	if now.After(runAt) {
+		boundary = boundary.Add(duration)
+		runAt = boundary.Add(-lead)
+	}
+	return runAt, boundary
+}
+
 func (s *Scheduler) OnClosedBar(request BatchRequest) []Job {
 	if !request.Connected {
 		return nil
