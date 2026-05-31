@@ -8,18 +8,24 @@ Draft for review. This is the V1 scanner design. Account-aware sizing and IBKR c
 
 Upgrade Watchlist analysis into an A+ opportunity scanner that behaves more like a cautious discretionary trader: it should rank the watchlist by the quality of current market setups, make no-trade reasons obvious, and keep the user focused on only the cleanest opportunities.
 
-Add optional manual trade observations so the user can record personal context such as an observed entry, direction, stop, target, and notes. These observations are local, user-entered context for follow-up review. They are not broker state, not account state, and not inputs for position sizing.
+Add optional manual trade observations so the user can record personal context such as an observed entry, direction, stop, target, and notes. These observations are local, user-entered context for follow-up review. In this V1 design they are not broker state, not account state, and not inputs for position sizing.
 
-For this V1 design, the app remains market-data-only analysis assistance. It must not place orders, cancel orders, size positions, allocate accounts, automate trading, or read IBKR account, cash, buying power, position, or order state.
+For this V1 design, the app remains market-data-only analysis assistance. It does not place orders, cancel orders, size positions, allocate accounts, automate trading, or read IBKR account, cash, buying power, position, or order state.
+
+## Compatibility With V2
+
+The V2 account-aware spec supersedes this document wherever cash, buying power, current positions, maximum stock trade amount, or advisory sizing are discussed. This V1 document still owns the baseline Watchlist scanner, manual observation panel, and market-only prompt behavior. V2 extends those ideas with a separate read-only account snapshot boundary and account-aware advisory fields.
+
+Both V1 and V2 continue to forbid order placement, order cancellation, staged orders, order approval, and automated trading.
 
 ## V1 Non-Goals
 
-- No order placement, order cancellation, bracket order preparation, or trade approval UI.
-- No editable share quantity, cash balance, buying power, affordability, allocation, or "how many shares should I buy" workflow.
-- No IBKR account APIs such as `ReqAccountUpdates`, `ReqPositions`, `ReqOpenOrders`, `PlaceOrder`, or `CancelOrder`.
-- No Codex prompt access to user cash, manual trade observations, broker holdings, account balances, or repository files.
-- No change to Backtest's fixed `100` share simulation assumption.
-- No automatic trade management. Manual observations may show deterministic status hints, but never issue hold, sell, buy, add, reduce, or exit instructions.
+- V1 does not include order placement, order cancellation, bracket order preparation, or trade approval UI.
+- V1 does not include editable share quantity, cash balance, buying power, affordability, allocation, or "how many shares should I buy" workflows.
+- V1 does not use IBKR account APIs. V2 account snapshot APIs are specified separately in the account-aware design.
+- V1 Codex prompts do not include user cash, manual trade observations, broker holdings, account balances, or repository files. V2 account-aware prompts are specified separately.
+- V1 does not change Backtest's fixed `100` share simulation assumption.
+- V1 does not add automatic trade management. Manual observations may show deterministic status hints, but never issue hold, sell, buy, add, reduce, or exit instructions.
 
 ## Approach
 
@@ -35,8 +41,8 @@ The selected design is:
 Rejected alternatives:
 
 - Backtest evidence in scanner: useful later, but the user chose the simpler A+ scanner path first.
-- Cash-aware AI sizing: rejected because it is account allocation and position sizing.
-- Passing manual trade observations into Codex: rejected because current safety rules limit Codex prompts to supplied market data and PriceAction excerpts.
+- Cash-aware advisory sizing: deferred to the V2 account-aware spec.
+- Passing manual trade observations into the V1 Codex prompt: rejected because this V1 prompt scope is limited to supplied market data and PriceAction excerpts.
 
 ## Product Behavior
 
@@ -81,7 +87,7 @@ Fields:
 - Notes.
 - Created at and updated at timestamps.
 
-Fields intentionally not allowed:
+Fields intentionally not allowed in the V1 manual observation form:
 
 - Shares.
 - Cash.
@@ -91,6 +97,8 @@ Fields intentionally not allowed:
 - Order ID.
 - Broker account ID.
 - Any computed position size.
+
+V2 account-aware fields belong in Settings, Account Context, and position-management output, not in this V1 manual observation form.
 
 The panel can show deterministic hints:
 
@@ -104,7 +112,7 @@ Hints must use review language, such as "Review manually: price is below the pla
 
 ### V1 Cash And 100-Share Requests
 
-This V1 scanner must not collect cash or buying power. It must not answer whether the user can afford `100` shares, and it must not suggest a quantity.
+This V1 scanner must not collect cash or buying power. It must not answer whether the user can afford `100` shares, and it must not suggest a quantity. V2 account-aware sizing replaces this limitation only when the V2 account snapshot feature is implemented.
 
 Backtest may continue showing its fixed `100` share simulation assumption because it is historical simulation, not user account allocation. Watchlist scanner and manual observations must not reuse that assumption as a live affordability or sizing hint.
 
@@ -197,18 +205,18 @@ func DeriveObservationHints(
 
 This helper uses only current price, latest analysis result, and the observation's local fields.
 
-### Agent Prompt
+### V1 Agent Prompt
 
-Keep Codex market-only.
+Keep Codex market-only for V1.
 
 Prompt changes are limited to A+ scanner clarity:
 
 - Re-emphasize that A+ requires clear location, trigger, invalidation, target space, and multi-timeframe agreement.
 - Ask Codex to make `no_trade_reason` and `rejection_reasons` concise and actionable for scanner display.
 - Preserve existing instructions that default to neutral unless the setup is clearly A+.
-- Preserve existing instructions that Codex must not access accounts, portfolio data, positions, balances, or live brokerage state.
+- Preserve existing V1 instructions that Codex must not access accounts, portfolio data, positions, balances, or live brokerage state.
 
-Do not add observation, cash, buying power, manual holding, or account fields to `AgentInput`.
+Do not add observation, cash, buying power, manual holding, or account fields to the V1 `AgentInput`. V2 account-aware `AgentInput` changes are specified in the account-aware design.
 
 ### Frontend
 
@@ -223,13 +231,15 @@ Add:
 - Observation edit form with direction, status, entry, stop, target, and notes.
 - Observation hints below the form.
 
-Do not add:
+Do not add to the V1 Watchlist scanner or manual observation form:
 
 - Cash input.
 - Shares input.
 - Buying power display.
 - Account allocation display.
 - Buy, sell, hold, exit, add, reduce, approve, automate, or execute buttons.
+
+V2 may add account-aware display fields and a maximum stock trade amount setting, but still must not add execution or automation controls.
 
 ## Data Flow
 
@@ -253,10 +263,11 @@ Do not add:
 
 ## V1 Safety Requirements
 
-- Safety tests must continue scanning for forbidden IBKR calls.
-- New code must not introduce account, position, order, buying power, or cash APIs.
-- New Codex prompt tests must assert that manual observations and cash-like fields are not present.
-- UI tests must assert that Watchlist has no cash, shares, allocation, buy, sell, hold, exit, add, reduce, approve, automate, or execute controls.
+- V1 safety tests must continue scanning for forbidden IBKR calls.
+- V1 implementation code must not introduce account, position, buying power, or cash APIs.
+- V2 account snapshot code is governed by the account-aware spec and the updated `AGENTS.md` safety boundary.
+- V1 Codex prompt tests must assert that manual observations and cash-like fields are not present.
+- V1 UI tests must assert that the manual observation form has no cash, shares, allocation, buy, sell, hold, exit, add, reduce, approve, automate, or execute controls.
 - Copy must describe output as analysis assistance and manual review, not financial advice or automated trading.
 
 ## Acceptance Criteria
@@ -266,9 +277,9 @@ Do not add:
 - Non-A+ rows show the main no-trade or rejection reason.
 - Selecting a scanner row updates the existing Watchlist detail.
 - User can create, edit, close, and reload a manual observation for a symbol.
-- Observation form does not include shares, cash, buying power, allocation, account, or order fields.
+- V1 observation form does not include shares, cash, buying power, allocation, account, or order fields.
 - Observation hints update when current price or latest analysis changes.
-- Codex prompt remains limited to supplied market data and PriceAction excerpts.
+- V1 Codex prompt remains limited to supplied market data and PriceAction excerpts.
 - Backtest remains independent and keeps its fixed `100` share historical simulation assumption.
 - Settings remains independent and does not show scanner detail or observation forms.
 
@@ -280,8 +291,8 @@ Backend:
 - Storage CRUD for observations, including persistence across reload.
 - Service methods for listing, saving, and closing observations without IBKR calls.
 - Observation hint derivation for long and short observations.
-- Agent prompt tests for A+ scanner wording and absence of manual observation, cash, buying power, account, and position fields.
-- Safety tests for forbidden IBKR APIs.
+- V1 agent prompt tests for A+ scanner wording and absence of manual observation, cash, buying power, account, and position fields.
+- V1 safety tests for forbidden IBKR APIs.
 
 Frontend:
 
@@ -289,7 +300,7 @@ Frontend:
 - Scanner row selection updates Watchlist detail.
 - Observation form validation and persistence through mocked backend.
 - Observation hints for entry zone, stop, target, stale analysis, and failed/no-data states.
-- Absence of cash, shares, allocation, account, and order controls.
+- Absence of cash, shares, allocation, account, and order controls in the V1 observation form.
 - Section isolation remains intact: Backtest and Settings do not render scanner observation forms.
 
 ## Implementation Notes
@@ -304,4 +315,4 @@ Frontend:
 - Placeholder scan: no placeholders remain.
 - Internal consistency: scanner uses Codex market-only output; observations are local deterministic context.
 - Scope check: this is one focused Watchlist feature with local persistence, not a trading execution system.
-- Ambiguity check: cash, buying power, share quantity, and AI position sizing are explicitly out of scope for V1 and superseded for V2 by the account-aware spec.
+- Ambiguity check: cash, buying power, share quantity, and AI position sizing are explicitly out of scope for V1 only and superseded for V2 by the account-aware spec.
