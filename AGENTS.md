@@ -2,9 +2,11 @@
 
 ## Project Summary
 
-This repository is a Wails v2 desktop app for read-only IBKR market data analysis with a local Codex CLI analysis runtime.
+This repository is a Wails v2 desktop app for IBKR market and account-aware analysis with a local Codex CLI analysis runtime.
 
-Version 1 is analysis assistance only. Do not add order placement, order cancellation, position sizing, account allocation, automated trading, or any IBKR account mutation capability in backend code, frontend UI, tests, docs, or Codex prompts.
+Version 1 is market-data analysis assistance only.
+
+Version 2 may add read-only account snapshots for cash, buying power, and current stock positions, plus advisory position management based on a user-defined maximum stock trade amount. This must remain advisory and manually reviewed. Do not add order placement, order cancellation, order staging, automated trading, or any IBKR account mutation capability in backend code, frontend UI, tests, docs, or Codex prompts.
 
 ## Runtime Defaults
 
@@ -65,6 +67,7 @@ make dev
 - `internal/domain`: shared Go domain models and validation defaults.
 - `internal/storage`: persisted settings and last known analysis history.
 - `internal/market`: read-only market data provider interface, mock provider, historical bar helpers, and IBKR adapter.
+- `internal/account`: planned V2 read-only account snapshot provider for cash, buying power, and current stock positions.
 - `internal/scheduler`: timeframe scheduling and next-run logic.
 - `internal/analysis`: feature derivation and bounded analysis queue.
 - `internal/agent`: Go client for local `codex exec` analysis, PriceAction knowledge selection, and tests for the Codex CLI boundary.
@@ -75,11 +78,14 @@ make dev
 
 ## Safety Rules
 
-- Keep `market.MarketDataProvider` read-only.
-- Do not call IBKR APIs such as `PlaceOrder`, `CancelOrder`, `ReqAccountUpdates`, `ReqPositions`, or `ReqOpenOrders`.
-- Do not add UI controls that imply executing, approving, sizing, allocating, or automating trades.
-- Analysis output may include directional bias, entry zone, stop loss, take profit, risk-reward, confidence, summary, and invalidation notes, but it must remain advisory.
-- Codex prompts may use only supplied market data and Go-injected PriceAction excerpts. Do not let Codex browse the repo or load account/brokerage state for analysis.
+- Keep `market.MarketDataProvider` market-data read-only.
+- Use a separate account provider boundary for V2 account snapshots. Read-only account APIs for cash, buying power, and current positions are allowed only inside that boundary.
+- Do not call IBKR order mutation APIs such as `PlaceOrder` or `CancelOrder`.
+- Do not request open orders or staged order state through `ReqOpenOrders` unless a future spec explicitly expands the safety boundary.
+- Do not add UI controls that imply executing, approving, staging, or automating trades.
+- Analysis output may include directional bias, entry zone, stop loss, take profit, risk-reward, confidence, summary, invalidation notes, and advisory position-management fields, but it must remain advisory.
+- V2 Codex prompts may use only supplied market data, Go-injected PriceAction excerpts, a sanitized read-only account snapshot, and the user's configured maximum stock trade amount. Do not let Codex browse the repo, request credentials, inspect order state, or mutate brokerage/account state.
+- Advisory sizing must be bounded by the user's maximum stock trade amount and available account snapshot. It must never place, stage, approve, or automate an IBKR order.
 - Preserve the mock market provider so tests and local development do not require TWS/Gateway.
 
 ## Development Expectations
@@ -87,6 +93,7 @@ make dev
 - Prefer small, focused changes that match existing Go, React, and TypeScript patterns.
 - Add or update tests when behavior changes.
 - For backend behavior, start with Go tests under the relevant `internal/...` package.
+- For account snapshot behavior, use Go tests under `internal/account` and service tests under `internal/app`.
 - For Codex analysis behavior, use Go tests under `internal/agent`.
 - For frontend behavior, use Vitest and Testing Library tests under `frontend/src`.
 - After changing Wails-bound Go methods or domain models, regenerate/check frontend bindings by running the relevant build or `make build`.
@@ -102,4 +109,5 @@ Before considering a live IBKR integration change complete, run the paper-tradin
 - Watchlist `NVDA, AAPL, TSLA`
 - Timeframe `5m`
 - Confirm queued/analyzing/complete or scoped failure states per symbol
-- Confirm there is no order placement UI, backend method, or IBKR order call
+- If V2 account-aware analysis is enabled, confirm account snapshot reads cash/buying power/positions only
+- Confirm there is no order placement UI, backend order method, staged order state, automated execution, or IBKR order mutation call

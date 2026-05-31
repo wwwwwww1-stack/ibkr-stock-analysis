@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft for review.
+Draft for review. This is the V1 scanner design. Account-aware sizing and IBKR cash/position snapshots are covered by `2026-05-31-account-aware-a-plus-position-management-design.md`, which supersedes this document's V1 cash and sizing exclusions for V2 work.
 
 ## Goal
 
@@ -10,9 +10,9 @@ Upgrade Watchlist analysis into an A+ opportunity scanner that behaves more like
 
 Add optional manual trade observations so the user can record personal context such as an observed entry, direction, stop, target, and notes. These observations are local, user-entered context for follow-up review. They are not broker state, not account state, and not inputs for position sizing.
 
-The app remains read-only analysis assistance. It must not place orders, cancel orders, size positions, allocate accounts, automate trading, or read IBKR account, cash, buying power, position, or order state.
+For this V1 design, the app remains market-data-only analysis assistance. It must not place orders, cancel orders, size positions, allocate accounts, automate trading, or read IBKR account, cash, buying power, position, or order state.
 
-## Non-Goals
+## V1 Non-Goals
 
 - No order placement, order cancellation, bracket order preparation, or trade approval UI.
 - No editable share quantity, cash balance, buying power, affordability, allocation, or "how many shares should I buy" workflow.
@@ -102,9 +102,9 @@ The panel can show deterministic hints:
 
 Hints must use review language, such as "Review manually: price is below the planned stop." They must not say buy, sell, hold, add, reduce, exit, or size.
 
-### Cash And 100-Share Requests
+### V1 Cash And 100-Share Requests
 
-The app must not collect cash or buying power. It must not answer whether the user can afford `100` shares, and it must not suggest a quantity.
+This V1 scanner must not collect cash or buying power. It must not answer whether the user can afford `100` shares, and it must not suggest a quantity.
 
 Backtest may continue showing its fixed `100` share simulation assumption because it is historical simulation, not user account allocation. Watchlist scanner and manual observations must not reuse that assumption as a live affordability or sizing hint.
 
@@ -251,7 +251,7 @@ Do not add:
 - Failed analysis rows remain visible with the scoped failure reason.
 - Observation hints are hidden for closed observations unless the user opens the observation history.
 
-## Safety Requirements
+## V1 Safety Requirements
 
 - Safety tests must continue scanning for forbidden IBKR calls.
 - New code must not introduce account, position, order, buying power, or cash APIs.
@@ -304,4 +304,4 @@ Frontend:
 - Placeholder scan: no placeholders remain.
 - Internal consistency: scanner uses Codex market-only output; observations are local deterministic context.
 - Scope check: this is one focused Watchlist feature with local persistence, not a trading execution system.
-- Ambiguity check: cash, buying power, share quantity, and AI position sizing are explicitly out of scope.
+- Ambiguity check: cash, buying power, share quantity, and AI position sizing are explicitly out of scope for V1 and superseded for V2 by the account-aware spec.
