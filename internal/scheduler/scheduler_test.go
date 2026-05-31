@@ -95,3 +95,33 @@ func TestSchedulerKeepsOnlyOnePendingBatchPerTimeframe(t *testing.T) {
 		t.Fatalf("pending = %#v, want only latest AAPL batch", pending)
 	}
 }
+
+func TestNextBoundaryRunSchedulesTenSecondsBeforeFixedCandleBoundary(t *testing.T) {
+	now := time.Date(2026, 5, 30, 9, 4, 30, 0, time.UTC)
+
+	runAt, boundary := NextBoundaryRun(now, domain.Timeframe5m, 10*time.Second)
+
+	wantRunAt := time.Date(2026, 5, 30, 9, 4, 50, 0, time.UTC)
+	wantBoundary := time.Date(2026, 5, 30, 9, 5, 0, 0, time.UTC)
+	if !runAt.Equal(wantRunAt) {
+		t.Fatalf("runAt = %s, want %s", runAt, wantRunAt)
+	}
+	if !boundary.Equal(wantBoundary) {
+		t.Fatalf("boundary = %s, want %s", boundary, wantBoundary)
+	}
+}
+
+func TestNextBoundaryRunSkipsCurrentBoundaryAfterLeadTimeHasPassed(t *testing.T) {
+	now := time.Date(2026, 5, 30, 9, 4, 51, 0, time.UTC)
+
+	runAt, boundary := NextBoundaryRun(now, domain.Timeframe5m, 10*time.Second)
+
+	wantRunAt := time.Date(2026, 5, 30, 9, 9, 50, 0, time.UTC)
+	wantBoundary := time.Date(2026, 5, 30, 9, 10, 0, 0, time.UTC)
+	if !runAt.Equal(wantRunAt) {
+		t.Fatalf("runAt = %s, want %s", runAt, wantRunAt)
+	}
+	if !boundary.Equal(wantBoundary) {
+		t.Fatalf("boundary = %s, want %s", boundary, wantBoundary)
+	}
+}

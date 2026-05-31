@@ -34,4 +34,5 @@ type MarketDataProvider interface {
 	State() ProviderState
 	Subscribe(ctx context.Context, symbol string, timeframe domain.Timeframe) (<-chan BarUpdate, Unsubscribe, error)
 	HistoricalBars(ctx context.Context, symbol string, timeframe domain.Timeframe, limit int) ([]domain.Bar, error)
+	HistoricalBarsRange(ctx context.Context, symbol string, timeframe domain.Timeframe, start time.Time, end time.Time) ([]domain.Bar, error)
 }

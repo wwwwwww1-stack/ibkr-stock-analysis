@@ -18,16 +18,22 @@ func TestMockClientReturnsConfiguredOutput(t *testing.T) {
 	client := NewMockClient()
 	riskReward := 2.0
 	output := domain.AgentOutput{
-		Direction:     domain.DirectionLong,
-		EntryZone:     &domain.EntryZone{Low: 10, High: 11},
-		StopLoss:      ptr(9.5),
-		TakeProfit:    []float64{12},
-		RiskReward:    &riskReward,
-		Confidence:    0.7,
-		Summary:       "Held support.",
-		PriceAction:   []string{"Higher low"},
-		InvalidatedIf: "Close below 9.5",
-		GeneratedAt:   time.Date(2026, 5, 30, 18, 0, 0, 0, time.UTC),
+		Direction:        domain.DirectionLong,
+		SetupQuality:     domain.SetupQualityAPlus,
+		EntryZone:        &domain.EntryZone{Low: 10, High: 11},
+		StopLoss:         ptr(9.5),
+		TakeProfit:       []float64{12},
+		RiskReward:       &riskReward,
+		Confidence:       0.7,
+		MarketRegime:     "趋势回踩",
+		TradeThesis:      "回踩后买盘重新接住。",
+		Counterargument:  "如果跌回前低，突破可能失败。",
+		NoTradeReason:    "",
+		RejectionReasons: []string{},
+		Summary:          "Held support.",
+		PriceAction:      []string{"Higher low"},
+		InvalidatedIf:    "Close below 9.5",
+		GeneratedAt:      time.Date(2026, 5, 30, 18, 0, 0, 0, time.UTC),
 	}
 	client.SetOutput("NVDA", output)
 
@@ -70,13 +76,159 @@ func TestBuildCodexPromptIncludesMarketDataAndSafetyInstructions(t *testing.T) {
 	assertContains(t, prompt, "Do not run tools, do not inspect accounts, do not place or prepare orders.")
 	assertContains(t, prompt, "Use only supplied market data and supplied PriceAction knowledge excerpts.")
 	assertContains(t, prompt, "Do not browse the repository or read priceaction files yourself.")
+	assertContains(t, prompt, "Write all natural-language output fields in Simplified Chinese")
+	assertContains(t, prompt, "Default to neutral/no-trade unless the setup is clearly A+.")
+	assertContains(t, prompt, `Only output setup_quality "a_plus"`)
+	assertContains(t, prompt, "market_regime")
+	assertContains(t, prompt, "counterargument")
+	assertContains(t, prompt, "no_trade_reason")
 	assertContains(t, prompt, "Return exactly one JSON object matching the schema.")
+	assertContains(t, prompt, "For long direction, stop_loss must be below both current_price and entry_zone.low, and every take_profit must be above both current_price and entry_zone.high.")
+	assertContains(t, prompt, "For short direction, stop_loss must be above both current_price and entry_zone.high, and every take_profit must be below both current_price and entry_zone.low.")
+	assertContains(t, prompt, "If directional levels cannot satisfy those price-side rules, return neutral.")
 	assertContains(t, prompt, "Use generated_at exactly as: 2026-05-30T10:05:00Z")
 	assertContains(t, prompt, "PriceAction knowledge excerpts:")
 	assertContains(t, prompt, `"source": "priceaction/趋势 1.md"`)
 	assertContains(t, prompt, "更高的低点")
 	assertContains(t, prompt, `"symbol": "NVDA"`)
 	assertContains(t, prompt, `"timeframe": "5m"`)
+}
+
+func TestBuildCodexPromptIncludesSanitizedAccountContextWhenPresent(t *testing.T) {
+	input := validAgentInput()
+	maxShares := 50
+	input.AccountContext = &domain.AccountSnapshotContext{
+		AvailableCashUSD:       15000,
+		BuyingPowerUSD:         30000,
+		SnapshotAt:             time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+		MaxStockTradeAmountUSD: 5000,
+		Positions: []domain.AccountPositionContext{{
+			Symbol:           "NVDA",
+			Quantity:         10,
+			AverageCost:      100,
+			MarketPrice:      120,
+			MarketValueUSD:   1200,
+			UnrealizedPnLUSD: 200,
+		}},
+		SizingEnvelope: &domain.SizingEnvelope{
+			Symbol:                 "NVDA",
+			SizingStatus:           domain.SizingStatusAvailable,
+			AdvisoryNotionalCapUSD: 5000,
+			AdvisoryMaxShares:      &maxShares,
+		},
+	}
+
+	prompt, err := BuildCodexPrompt(input, time.Date(2026, 5, 31, 12, 5, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatalf("BuildCodexPrompt returned error: %v", err)
+	}
+
+	assertContains(t, prompt, "Use only the supplied sanitized account snapshot, configured maximum stock trade amount, and sizing envelope.")
+	assertContains(t, prompt, "Treat all position-management output as advisory and manually reviewed.")
+	assertContains(t, prompt, "Require manual_review_required to be true whenever position_management is not null.")
+	assertContains(t, prompt, `"account_context"`)
+	assertContains(t, prompt, `"available_cash_usd": 15000`)
+	assertContains(t, prompt, `"max_stock_trade_amount_usd": 5000`)
+	assertContains(t, prompt, `"advisory_max_shares": 50`)
+	assertContains(t, prompt, `"symbol": "NVDA"`)
+	for _, forbidden := range []string{"DU123", "credential", "open_orders", "order_payload", "/Users/"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt leaked forbidden account detail %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildCodexPromptOmitsAccountContextWhenAbsent(t *testing.T) {
+	input := validAgentInput()
+
+	prompt, err := BuildCodexPrompt(input, time.Date(2026, 5, 31, 12, 5, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatalf("BuildCodexPrompt returned error: %v", err)
+	}
+
+	assertContains(t, prompt, "Do not claim to access accounts, portfolio data, positions, balances, or live brokerage state.")
+	if strings.Contains(prompt, `"account_context"`) {
+		t.Fatalf("prompt should omit account_context when absent:\n%s", prompt)
+	}
+}
+
+func TestBuildCodexPromptIncludesMultiTimeframeContextInstructions(t *testing.T) {
+	input := validAgentInput()
+	currentPrice := 128.0
+	input.MultiTimeframeContext = []domain.TimeframeContext{
+		{
+			Timeframe:    domain.Timeframe15m,
+			Available:    true,
+			CurrentPrice: &currentPrice,
+			Bars: []domain.Bar{
+				{
+					Time:   time.Date(2026, 5, 30, 10, 0, 0, 0, time.UTC),
+					Open:   126,
+					High:   129,
+					Low:    125,
+					Close:  128,
+					Volume: 360000,
+				},
+			},
+			Derived: &domain.DerivedFeatures{
+				SessionHigh:              129,
+				SessionLow:               121,
+				RecentSwingHighs:         []float64{129},
+				RecentSwingLows:          []float64{121},
+				ATR:                      2.4,
+				VolumeContext:            "above_average",
+				LastCloseRelativeToRange: "near_high",
+			},
+		},
+		{
+			Timeframe: domain.Timeframe1h,
+			Available: false,
+			Error:     "no data for NVDA 1h",
+		},
+	}
+	generatedAt := time.Date(2026, 5, 30, 10, 5, 0, 0, time.UTC)
+
+	prompt, err := BuildCodexPrompt(input, generatedAt, nil)
+	if err != nil {
+		t.Fatalf("BuildCodexPrompt returned error: %v", err)
+	}
+
+	assertContains(t, prompt, "Use the top-level timeframe and bars as the primary analysis timeframe.")
+	assertContains(t, prompt, "Use multi_timeframe_context for 15m and 1h resonance, conflicts, and support/resistance context.")
+	assertContains(t, prompt, "Do not invent unavailable higher-timeframe data.")
+	assertContains(t, prompt, `"multi_timeframe_context"`)
+	assertContains(t, prompt, `"timeframe": "15m"`)
+	assertContains(t, prompt, `"timeframe": "1h"`)
+	assertContains(t, prompt, `"available": false`)
+	assertContains(t, prompt, "no data for NVDA 1h")
+}
+
+func TestBuildCodexPromptIncludesChartImageInstructionsAndMetadata(t *testing.T) {
+	input := validAgentInput()
+	capturedAt := time.Date(2026, 5, 30, 10, 4, 0, 0, time.UTC)
+	input.ChartImage = &domain.ChartImageInput{
+		Provided:   true,
+		Source:     "desktop_region",
+		MimeType:   "image/png",
+		CapturedAt: &capturedAt,
+		Path:       "/tmp/private-chart.png",
+	}
+	generatedAt := time.Date(2026, 5, 30, 10, 5, 0, 0, time.UTC)
+
+	prompt, err := BuildCodexPrompt(input, generatedAt, nil)
+	if err != nil {
+		t.Fatalf("BuildCodexPrompt returned error: %v", err)
+	}
+
+	assertContains(t, prompt, "Use the attached chart screenshot only as visual K-line context.")
+	assertContains(t, prompt, "Use supplied IBKR OHLCV data as the source of truth for exact prices and time.")
+	assertContains(t, prompt, "If the screenshot is unclear or does not match the supplied symbol/timeframe, say so in price_action and rely on supplied market data.")
+	assertContains(t, prompt, `"chart_image"`)
+	assertContains(t, prompt, `"source": "desktop_region"`)
+	assertContains(t, prompt, `"mime_type": "image/png"`)
+	if strings.Contains(prompt, "/tmp/private-chart.png") {
+		t.Fatalf("prompt leaked local image path: %s", prompt)
+	}
 }
 
 func TestCodexClientInvokesCodexExecAndParsesValidOutput(t *testing.T) {
@@ -92,7 +244,7 @@ while [ "$#" -gt 0 ]; do
 done
 cat > "$PROMPT_FILE"
 cat > "$out" <<'JSON'
-{"direction":"neutral","take_profit":[],"confidence":0.42,"summary":"Range-bound action.","price_action":["Holding inside prior range"],"invalidated_if":"Breakout from the range.","generated_at":"2026-05-30T10:05:00Z"}
+{"direction":"neutral","setup_quality":"none","entry_zone":null,"stop_loss":null,"take_profit":[],"risk_reward":null,"confidence":0.42,"market_regime":"震荡","trade_thesis":"","counterargument":"区间两端都没有被否定。","no_trade_reason":"价格在区间中部，没有 A+ 触发。","rejection_reasons":["区间中部"],"summary":"Range-bound action.","price_action":["Holding inside prior range"],"invalidated_if":"Breakout from the range.","generated_at":"2026-05-30T10:05:00Z"}
 JSON
 `)
 	client := &CodexClient{
@@ -128,6 +280,35 @@ JSON
 	}
 }
 
+func TestCodexClientAttachesChartImage(t *testing.T) {
+	fake := createFakeCodex(t, `printf '%s\n' "$@" > "$RECORD_FILE"
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+cat > "$out" <<'JSON'
+{"direction":"neutral","setup_quality":"none","entry_zone":null,"stop_loss":null,"take_profit":[],"risk_reward":null,"confidence":0.42,"market_regime":"震荡","trade_thesis":"","counterargument":"区间两端都没有被否定。","no_trade_reason":"价格在区间中部，没有 A+ 触发。","rejection_reasons":["区间中部"],"summary":"Range-bound action.","price_action":["Holding inside prior range"],"invalidated_if":"Breakout from the range.","generated_at":"2026-05-30T10:05:00Z"}
+JSON
+`)
+	input := validAgentInput()
+	input.ChartImage = &domain.ChartImageInput{Provided: true, Source: "desktop_region", MimeType: "image/png", Path: "/tmp/chart.png"}
+	client := &CodexClient{
+		Command: fake,
+		Now:     func() time.Time { return time.Date(2026, 5, 30, 10, 5, 0, 0, time.UTC) },
+	}
+
+	if _, err := client.Analyze(context.Background(), input); err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+
+	args := readRecordedFile(t, "RECORD_FILE")
+	assertContains(t, args, "--image\n/tmp/chart.png")
+}
+
 func TestCodexClientUsesConfiguredModel(t *testing.T) {
 	fake := createFakeCodex(t, `printf '%s\n' "$@" > "$RECORD_FILE"
 out=""
@@ -139,7 +320,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 cat > "$out" <<'JSON'
-{"direction":"neutral","take_profit":[],"confidence":0.42,"summary":"Range-bound action.","price_action":["Holding inside prior range"],"invalidated_if":"Breakout from the range.","generated_at":"2026-05-30T10:05:00Z"}
+{"direction":"neutral","setup_quality":"none","entry_zone":null,"stop_loss":null,"take_profit":[],"risk_reward":null,"confidence":0.42,"market_regime":"震荡","trade_thesis":"","counterargument":"区间两端都没有被否定。","no_trade_reason":"价格在区间中部，没有 A+ 触发。","rejection_reasons":["区间中部"],"summary":"Range-bound action.","price_action":["Holding inside prior range"],"invalidated_if":"Breakout from the range.","generated_at":"2026-05-30T10:05:00Z"}
 JSON
 `)
 	client := &CodexClient{Command: fake, Model: "gpt-test"}
@@ -211,6 +392,53 @@ func TestAgentOutputSchemaRequiresEveryPropertyForCodexStrictSchema(t *testing.T
 		if !required[name] {
 			t.Fatalf("schema property %q is not listed in required; Codex strict schema requires every property to be required and nullable when optional", name)
 		}
+	}
+}
+
+func TestAgentOutputSchemaIncludesAPlusTraderReviewFields(t *testing.T) {
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(agentOutputJSONSchema), &schema); err != nil {
+		t.Fatalf("agentOutputJSONSchema is invalid JSON: %v", err)
+	}
+
+	for _, name := range []string{"setup_quality", "market_regime", "trade_thesis", "counterargument", "no_trade_reason", "rejection_reasons"} {
+		if _, ok := schema.Properties[name]; !ok {
+			t.Fatalf("schema is missing %q", name)
+		}
+	}
+	assertContains(t, string(schema.Properties["setup_quality"]), `"a_plus"`)
+	assertContains(t, string(schema.Properties["setup_quality"]), `"none"`)
+}
+
+func TestAgentOutputSchemaIncludesPositionManagementContract(t *testing.T) {
+	var schema struct {
+		Required   []string                   `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(agentOutputJSONSchema), &schema); err != nil {
+		t.Fatalf("agentOutputJSONSchema is invalid JSON: %v", err)
+	}
+	required := make(map[string]bool, len(schema.Required))
+	for _, name := range schema.Required {
+		required[name] = true
+	}
+	if !required["position_management"] {
+		t.Fatalf("position_management must be required for Codex strict schema")
+	}
+	positionSchema := string(schema.Properties["position_management"])
+	for _, fragment := range []string{
+		`"available"`,
+		`"blocked_by_cash"`,
+		`"existing_position_over_cap"`,
+		`"no_trade"`,
+		`"consider_setup"`,
+		`"manage_existing"`,
+		`"manual_review_required"`,
+		`"type": "null"`,
+	} {
+		assertContains(t, positionSchema, fragment)
 	}
 }
 

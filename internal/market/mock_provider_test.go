@@ -43,6 +43,26 @@ func TestMockProviderHistoricalBars(t *testing.T) {
 	}
 }
 
+func TestMockProviderHistoricalBarsRangeFiltersByTime(t *testing.T) {
+	provider := NewMockProvider()
+	start := time.Date(2026, 5, 29, 13, 30, 0, 0, time.UTC)
+	provider.SetHistoricalBars("nvda", domain.Timeframe5m, []domain.Bar{
+		{Time: start.Add(-5 * time.Minute), Close: 99},
+		{Time: start, Close: 100},
+		{Time: start.Add(5 * time.Minute), Close: 101},
+		{Time: start.Add(390 * time.Minute), Close: 102},
+	})
+
+	bars, err := provider.HistoricalBarsRange(context.Background(), "NVDA", domain.Timeframe5m, start, start.Add(390*time.Minute))
+	if err != nil {
+		t.Fatalf("HistoricalBarsRange returned error: %v", err)
+	}
+
+	if len(bars) != 2 || bars[0].Close != 100 || bars[1].Close != 101 {
+		t.Fatalf("bars = %#v, want only bars inside [start,end)", bars)
+	}
+}
+
 func TestMockProviderReturnsNoDataForMissingSymbol(t *testing.T) {
 	provider := NewMockProvider()
 

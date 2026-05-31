@@ -11,6 +11,10 @@ const baseState: AppState = {
     selected_timeframe: '5m',
   },
   connection_status: 'disconnected',
+  scheduled_analysis_enabled: false,
+  account_snapshot: {
+    status: 'unavailable',
+  },
   symbols: [
     {
       symbol: 'NVDA',
@@ -65,4 +69,3 @@ describe('appState helpers', () => {
     expect(baseState.connection_status).toBe('disconnected');
   });
 });
-

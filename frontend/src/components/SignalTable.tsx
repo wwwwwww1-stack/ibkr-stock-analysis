@@ -3,22 +3,24 @@ import type { SymbolState } from '../types/domain';
 interface Props {
   symbols: SymbolState[];
   selected?: string;
+  view: 'current' | 'history';
   onSelect(symbol: string): void;
+  onViewChange(view: 'current' | 'history'): void;
 }
 
-export function SignalTable({ symbols, selected, onSelect }: Props) {
+export function SignalTable({ symbols, selected, view, onSelect, onViewChange }: Props) {
   if (symbols.length === 0) {
     return (
       <section className="panel signal-table empty-state">
-        <h2>Signals</h2>
+        <SignalHeader view={view} onViewChange={onViewChange} />
         <p>Enter a watchlist to begin.</p>
       </section>
     );
   }
 
   return (
-    <section className="panel signal-table" aria-label="Batch signal table">
-      <h2>Signals</h2>
+    <section className="panel signal-table" aria-label="Signal table">
+      <SignalHeader view={view} onViewChange={onViewChange} />
       <table>
         <thead>
           <tr>
@@ -59,8 +61,29 @@ export function SignalTable({ symbols, selected, onSelect }: Props) {
   );
 }
 
+export function SignalHeader({
+  view,
+  onViewChange,
+}: {
+  view: 'current' | 'history';
+  onViewChange(view: 'current' | 'history'): void;
+}) {
+  return (
+    <div className="signal-table-header">
+      <h2>Signals</h2>
+      <div className="signal-tabs" role="group" aria-label="Signal view">
+        <button type="button" className={view === 'current' ? 'active' : ''} onClick={() => onViewChange('current')}>
+          Current
+        </button>
+        <button type="button" className={view === 'history' ? 'active' : ''} onClick={() => onViewChange('history')}>
+          History
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function formatNumber(value?: number | null): string {
   if (typeof value !== 'number' || Number.isNaN(value)) return '-';
   return value.toFixed(2);
 }
-

@@ -10,14 +10,42 @@ export function DisconnectIBKR() {
   return window['go']['main']['App']['DisconnectIBKR']();
 }
 
+export function ExportAnalysisHistoryCSV(arg1) {
+  return window['go']['main']['App']['ExportAnalysisHistoryCSV'](arg1);
+}
+
+export function GetAnalysisHistory(arg1) {
+  return window['go']['main']['App']['GetAnalysisHistory'](arg1);
+}
+
 export function GetState() {
   return window['go']['main']['App']['GetState']();
 }
 
-export function RunAnalysisNow() {
-  return window['go']['main']['App']['RunAnalysisNow']();
+export function ListChartWindows() {
+  return window['go']['main']['App']['ListChartWindows']();
+}
+
+export function RefreshAccountSnapshot() {
+  return window['go']['main']['App']['RefreshAccountSnapshot']();
+}
+
+export function RunAnalysisNow(arg1) {
+  return window['go']['main']['App']['RunAnalysisNow'](arg1);
+}
+
+export function RunBacktest(arg1) {
+  return window['go']['main']['App']['RunBacktest'](arg1);
+}
+
+export function RunScreenshotAnalysis(arg1) {
+  return window['go']['main']['App']['RunScreenshotAnalysis'](arg1);
 }
 
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
+}
+
+export function SetScheduledAnalysisEnabled(arg1) {
+  return window['go']['main']['App']['SetScheduledAnalysisEnabled'](arg1);
 }
